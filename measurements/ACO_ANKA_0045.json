@@ -1,0 +1,168 @@
+{
+  "camera_matrix": [
+    [
+      1920.0,
+      0.0,
+      987.0689288325364
+    ],
+    [
+      0.0,
+      1920.0,
+      617.6101060377399
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "dist_coeffs": [
+    [
+      -1.4125460908545626,
+      2.417519092462329,
+      0.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "image_size": [
+    1920,
+    1080
+  ],
+  "device": "ACO_ANKA_0045",
+  "method": "edges + holes (+ rings) geometric fit, CNN supervised",
+  "fx_assumed": true,
+  "metric_valid": true,
+  "mm_per_px_panel": 0.32132344562465975,
+  "mm_per_px_object": null,
+  "scale_source": "bright panel holes, centre to centre 80.0 mm",
+  "stage1": {
+    "n_holes": 7,
+    "spread_pct": 1.091,
+    "step_px": 248.97,
+    "centre_method": "ellipse",
+    "centres": [
+      [
+        364.3,
+        730.38
+      ],
+      [
+        536.59,
+        743.43
+      ],
+      [
+        749.18,
+        755.86
+      ],
+      [
+        990.89,
+        762.32
+      ],
+      [
+        1232.1,
+        762.09
+      ],
+      [
+        1443.75,
+        756.09
+      ],
+      [
+        1614.94,
+        747.74
+      ]
+    ],
+    "centres_centroid": [
+      [
+        364.92,
+        730.61
+      ],
+      [
+        536.96,
+        743.52
+      ],
+      [
+        748.87,
+        756.04
+      ],
+      [
+        990.94,
+        763.13
+      ],
+      [
+        1232.48,
+        762.24
+      ],
+      [
+        1443.45,
+        756.73
+      ],
+      [
+        1614.2,
+        749.07
+      ]
+    ]
+  },
+  "stage2": {
+    "used": true,
+    "n_rings": 5,
+    "n_seeds": 1,
+    "ratio": 1.9365,
+    "ratio_ok": true,
+    "corner": 0.857,
+    "step_px": 476.07,
+    "centres": [
+      [
+        231.36,
+        827.59
+      ],
+      [
+        561.44,
+        859.8
+      ],
+      [
+        991.98,
+        884.46
+      ],
+      [
+        1418.95,
+        871.2
+      ],
+      [
+        1745.43,
+        847.63
+      ]
+    ]
+  },
+  "line_rms": [
+    0.789,
+    0.516,
+    0.112,
+    0.102
+  ],
+  "quality": {
+    "corner_px": 0.857,
+    "corner_stage1_px": 4.862,
+    "max_residual_px": 1.057,
+    "symmetry_px": 2.53
+  },
+  "net": {
+    "theta": {
+      "k1": -1.3527,
+      "k2": 2.0732,
+      "cx": 985.2707,
+      "cy": 583.8085
+    },
+    "envelope_ok": false,
+    "envelope_note": "outside envelope: s1=1.12 s2=0.50 (envelope [0.84,1.11] +-0.1) - not trained here",
+    "bias_corrected": true,
+    "diff_px": 6.32,
+    "threshold_px": 14.0
+  },
+  "guard": {
+    "verdict": "accept",
+    "checks": []
+  },
+  "created": "2026-09-17T08:51:53+00:00",
+  "version": "distorch-1.0",
+  "notes": "Scale was MEASURED from the 80 mm hole spacing of the bright panel, not assumed. fx is still unobservable from straightness (fx_assumed=true), but the metric measurement comes from the scale, not from fx, hence metric_valid=true. The CNN does not decide: the output is always the geometric solution."
+}

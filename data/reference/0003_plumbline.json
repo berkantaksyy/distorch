@@ -1,0 +1,58 @@
+{
+  "camera_matrix": [
+    [
+      1920.0,
+      0.0,
+      972.0515668014594
+    ],
+    [
+      0.0,
+      1920.0,
+      523.4116311316646
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "dist_coeffs": [
+    [
+      -1.1596250494652174,
+      1.1268498908762348,
+      0.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "rms_error": 0.7425232451169311,
+  "per_line_errors": [
+    0.5486845918710127,
+    1.230121361508037,
+    0.5092110633939732,
+    0.6455405059372631,
+    0.5020247788654121
+  ],
+  "image_size": [
+    1920,
+    1080
+  ],
+  "method": "plumb-line (Brown 1971)",
+  "error_metric": "duzlukten RMS sapma (px) -- reprojection error DEGIL",
+  "device": "ACO_6600_0003",
+  "n_lines": 5,
+  "n_points": 232,
+  "estimated_params": [
+    "k1",
+    "k2",
+    "cx",
+    "cy"
+  ],
+  "fx_assumed": true,
+  "metric_valid": false,
+  "flip_180": false,
+  "gate_passed": true,
+  "gate_reasons": [],
+  "synthetic_nodes": 67,
+  "notes": "fx duzlukten gozlenemez. fx_assumed=true ise camera_matrix'teki fx/fy varsayimdir, olcum degildir: undistort dogru calisir (k katsayilari fx secimini tam soguruyor) ama metrik olcum, 3B poz ve stereo icin GECERSIZDIR. p1/p2/k3 cozulmez, sifir yazilir. Profil bu cozunurluge kilitlidir. DIKKAT: 67 sentetik node (fit frame, model tahmini) fite girdi; rms_error ve gate_passed bunlari icerir."
+}

@@ -1,0 +1,5 @@
+numpy>=1.26
+opencv-python-headless>=4.9
+scipy>=1.11
+torch==2.5.1        # CPU-only aarch64 wheel; 2.6+ PyPI aarch64 wheel CUDA gerektiriyor
+torchvision==0.20.1

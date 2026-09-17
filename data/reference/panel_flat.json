@@ -1,0 +1,56 @@
+{
+  "camera_matrix": [
+    [
+      1920.0,
+      0.0,
+      1023.6484191243272
+    ],
+    [
+      0.0,
+      1920.0,
+      621.099668705217
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "dist_coeffs": [
+    [
+      -1.086030670459167,
+      0.8918306858763351,
+      0.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "rms_error": 1.674906221094036,
+  "per_line_errors": [
+    1.2230724072061905,
+    2.02694257175659,
+    1.3208678020693339,
+    1.920611416777234
+  ],
+  "image_size": [
+    1920,
+    1080
+  ],
+  "method": "plumb-line (Brown 1971)",
+  "error_metric": "duzlukten RMS sapma (px) -- reprojection error DEGIL",
+  "device": "20260818_104142_133",
+  "n_lines": 4,
+  "n_points": 136,
+  "estimated_params": [
+    "k1",
+    "k2",
+    "cx",
+    "cy"
+  ],
+  "fx_assumed": true,
+  "metric_valid": false,
+  "flip_180": false,
+  "gate_passed": true,
+  "gate_reasons": [],
+  "notes": "fx duzlukten gozlenemez. fx_assumed=true ise camera_matrix'teki fx/fy varsayimdir, olcum degildir: undistort dogru calisir (k katsayilari fx secimini tam soguruyor) ama metrik olcum, 3B poz ve stereo icin GECERSIZDIR. p1/p2/k3 cozulmez, sifir yazilir. Profil bu cozunurluge kilitlidir."
+}

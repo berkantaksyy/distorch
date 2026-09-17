@@ -1,0 +1,24 @@
+{
+  "model": "distort_v3",
+  "olcum": "106 saha karesi, geometrik cozum (kenar+delik, elips merkezleri) referans",
+  "sapma_medyan": {
+    "m1": -0.022858669245583774,
+    "m2": 0.16733632505000506,
+    "cx": -12.860457390759166,
+    "cy": -46.958051612950385
+  },
+  "duzeltme_sonrasi": {
+    "medyan_px": 6.26,
+    "MAD_px": 2.58,
+    "p90_px": 10.38,
+    "max_px": 13.35
+  },
+  "bekci_esigi_px": 14.0,
+  "esik_turetimi": "medyan + 3*MAD",
+  "fine_tune_tetikleyici": {
+    "olcut": "MAD > 8 px",
+    "olculen_MAD": 2.58,
+    "karar": "gerekmez"
+  },
+  "not": "distort_v3 plinebig'e nisan alarak egitildi; plinebig geometrik cozumden uzakta. Bu yuzden CNN ile geometri arasindaki fark RASTGELE DEGIL, SISTEMATIK. Duzeltmeden esik koymak 22 px'e cikardi ve kapiyi iseyaramaz hale getirdi. Sapma cikarilinca 14 px'e indi."
+}

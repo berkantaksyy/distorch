@@ -1,0 +1,12 @@
+# Panel Tkinter ile ciziliyor, opencv'nin GUI'sine ihtiyac yok ->
+# headless surum: Qt/GTK bagimliligi gelmiyor, kurulum hafif.
+opencv-python-headless>=4.8
+numpy>=1.24
+pillow>=10.0
+
+# distort_v2 / v3 gibi kalibrasyon aglari icin (CPU yeterli)
+torch>=2.0
+torchvision>=0.15
+
+# YOLO (Plastic.pt vb.) icin
+ultralytics>=8.0

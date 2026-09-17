@@ -1,0 +1,109 @@
+{
+  "version": "distort_v2",
+  "device": "mps",
+  "loss": "standardized MSE on (m1,m2,cx,cy)  [v1 ile ayni, Faz 2 deneyiyle secilmisti]",
+  "norm": {
+    "mean": [
+      1.130256,
+      1.417921,
+      1007.423342,
+      619.847257
+    ],
+    "std": [
+      0.011335,
+      0.044689,
+      23.085435,
+      22.962728
+    ]
+  },
+  "anchors": [
+    0.3,
+    0.6
+  ],
+  "envelope": {
+    "s": [
+      0.85,
+      1.15
+    ],
+    "rho": [
+      0.9,
+      1.12
+    ],
+    "dc_max": 40.0,
+    "m_ref": [
+      1.130301,
+      1.414376
+    ],
+    "anchors": [
+      0.3,
+      0.6
+    ],
+    "max_overflow": 0.015,
+    "center": [
+      1008.0,
+      620.0
+    ]
+  },
+  "theta0": {
+    "k1": -1.1157852656498009,
+    "k2": 0.9844536002193723,
+    "cx": 1009.1504873135154,
+    "cy": 618.3287415968794,
+    "f": 1920.0
+  },
+  "warm_start": "distort_v1.pt",
+  "train": {
+    "head_steps": 300,
+    "full_steps": 1700,
+    "batch": 16,
+    "lr_head": 0.0005,
+    "lr_full": 0.0001,
+    "proc_frac": 0.2,
+    "workers": 0,
+    "note": "Jupyter (kullanici kosumu); zarf v2"
+  },
+  "metrics": {
+    "val_best": {
+      "mean": 2.101060390472412,
+      "p95": 6.787245273590088,
+      "max": 60.262962341308594,
+      "corner": 4.787882328033447,
+      "shape_mean": 1.8519271612167358,
+      "stage": "tum",
+      "step": 1600
+    },
+    "test": {
+      "mean": 1.8416792154312134,
+      "p95": 5.892861843109131,
+      "max": 29.999755859375,
+      "corner": 4.154788494110107,
+      "shape_mean": 1.6256405115127563
+    },
+    "v1_baseline_same_sets": {
+      "val": {
+        "mean": 5.040063381195068,
+        "p95": 15.636409759521484,
+        "max": 174.83331298828125,
+        "corner": 11.614102363586426,
+        "shape_mean": 4.839285373687744
+      },
+      "test": {
+        "mean": 4.765559196472168,
+        "p95": 14.415310859680176,
+        "max": 201.04588317871094,
+        "corner": 11.312647819519043,
+        "shape_mean": 4.6813578605651855
+      }
+    }
+  },
+  "notes": "Zarf v2 fine-tune: s(0.85-1.15) rho(0.90-1.12) merkez(1008,620)+-40 m_ref=plinebig. Gerekce: plumb hakemi (plumbline.py, 28 Agu) + s-kenar yanliligi olcumu. Egitim kaynaklari 960x540 dataset kareleri \u2014 modelin kendi zinciri 960x540 uzerinden gectigi icin bilgi kaybi yok.",
+  "input_size": [
+    512,
+    288
+  ],
+  "mid_size": [
+    960,
+    540
+  ],
+  "n_out": 4
+}

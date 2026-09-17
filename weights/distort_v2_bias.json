@@ -1,0 +1,22 @@
+{
+  "model": "distort_v2",
+  "olcum": "104 saha karesi, geometrik cozum (kenar+delik+bilezik) referans. v2 bu karelerin HICBIRINI egitimde gormedi.",
+  "sapma_medyan": {
+    "m1": -0.019249912787328904,
+    "m2": 0.21833484569100237,
+    "cx": 4.983948522453488,
+    "cy": 7.739934257174184
+  },
+  "duzeltme_oncesi": {
+    "medyan_px": 64.84
+  },
+  "duzeltme_sonrasi": {
+    "medyan_px": 10.19,
+    "MAD_px": 4.07,
+    "p90_px": 36.23,
+    "max_px": 69.17
+  },
+  "bekci_esigi_px": 6.3,
+  "esik_turetimi": "boru hatti icindeki CNN-geometri farkindan: medyan 3.12 + 3*MAD 1.06",
+  "not": "v2'nin merkez sapmasi kucuk (cx +5.0, cy +7.7 px); v3'te cy -46.4 idi. v3 saha etiketlerini tek bir cihazdan (ACO_6600_0003) aldigi icin merkezi cokmustu (cy std 7.5 px, gercek filo yayilimi 33.2 px). UYARI: sapma bu 104 karede olculdu (in-sample); ayri bir sette dogrulanmali."
+}
