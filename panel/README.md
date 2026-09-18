@@ -84,7 +84,7 @@ Sağ sütunun en üstündeki yeşil düğme ölçüm ayarlarının hepsini birde
 |---|---|
 | mod | `2) CNN + delik + kenar + bilezik (tam sistem)` |
 | sapma düzeltmesi | açık |
-| roll düzleştirme | kapalı |
+| roll düzleştirme | **açık**, açı 0.000 |
 | kesme | 17 / 16 / 0 / 0 |
 | çıkış ölçeği | 1.0 (zaten kalıcı) |
 | `retina_masks` | açık |
@@ -180,7 +180,9 @@ düşürüyordu ve kazandırdığı kenarlar zaten `Kesme` ile atılıyordu.
 θ ilk karede bir kez çözülür, sonra sabit kalır — boş hazneyi bir kez kalibre
 edip sonra şişeyle test edebilmen için. Modeli/profili değiştirince sıfırlanır.
 
-`roll'u sıfırla` — girdiğin açı kadar kareyi düzleştirir. **Aynı remap'in
+`roll'u sıfırla` — **varsayılan açık, açı 0.000**. 0 derecede kare
+döndürülmez; kutucuk açık durduğu için bir açı yazdığın anda devreye girer.
+Girdiğin açı kadar kareyi düzleştirir. **Aynı remap'in
 içinde**, yani kare bir kez yeniden örnekleniyor, ek maliyet yok. Profilde
 `roll_deg` varsa kutuya kendi gelir.
 

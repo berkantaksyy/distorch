@@ -579,7 +579,7 @@ class Panel(_TkTaban):
         self.v_prof = tk.StringVar(value="")
         self.v_wts = tk.StringVar(value="")
         self.v_bias = tk.BooleanVar(value=True)
-        self.v_level = tk.BooleanVar(value=False)
+        self.v_level = tk.BooleanVar(value=True)     # roll hep acik, aci 0.000
         self.v_rolltxt = tk.StringVar(value="0.000")
 
         self.v_cut = {k: tk.DoubleVar(value=0.0) for k in ("ust", "alt", "sol", "sag")}
@@ -759,7 +759,8 @@ class Panel(_TkTaban):
         """
         self.v_mode.set("sistem")           # CNN + delik + kenar + bilezik
         self.v_bias.set(True)               # sapma duzeltmesi
-        self.v_level.set(False)             # roll duzlestirme kapali
+        self.v_level.set(True)              # roll hep acik
+        self.v_rolltxt.set("0.000")         # aci 0 -> kare dondurulmuyor
         self._cut_yukle(KESME_KAYITLI)      # kesme 28/16/10/5
         self.v_retina.set(True)             # olcum maskesi tam cozunurlukte
         self._reset_theta()                 # theta yeniden cozulsun
