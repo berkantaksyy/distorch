@@ -82,8 +82,7 @@ Sağ sütunun en üstündeki yeşil düğme ölçüm ayarlarının hepsini birde
 
 | ayar | değer |
 |---|---|
-| mod | `2) CNN + delik + kenar + bilezik (tam sistem)` |
-| sapma düzeltmesi | açık |
+| mod | `distorch tam sistem` |
 | roll düzleştirme | **açık**, açı 0.000 |
 | kesme | 17 / 16 / 0 / 0 |
 | çıkış ölçeği | 1.0 (zaten kalıcı) |
@@ -123,26 +122,24 @@ yazar. `tara` düğmesi `/dev/video*`'u yeniden listeler.
 > şişeyi bulur — çıktısı kutu/maske. Panel dosyayı seçerken hangisi olduğunu
 > arşivin içinden anlıyor; yanlış yuvaya koyarsan açık bir uyarıyla reddediyor.
 
-**1) Distorsiyon düzeltme** — dört mod:
+**1) Distorsiyon düzeltme** — üç mod:
 
 - `kapalı` — ham kare
 - `profil JSON` — distorch'un yazdığı profil (`camera_matrix` + `dist_coeffs`),
   veya düz `{"k1":..,"k2":..,"cx":..,"cy":..}`. İçinde `roll_deg` varsa okunur.
-- **`1) sadece CNN (.pt ağırlığı)`** — **istediğin ağırlık**: distort_v2, v3, ne olursa.
-  Yanındaki `*_meta.json` otomatik aranır (normalizasyon + çapalar oradan gelir),
-  `*_bias.json` varsa sapma düzeltmesi uygulanır. Hızlı (~0.2 sn) ama CNN
-  karar vermez, sadece bir başlangıç değeri verir.
-- **`2) CNN + delik + kenar + bilezik (tam sistem)`** — `distorch.calibrate`'i çalıştırır:
+- **`distorch tam sistem (CNN + delik + kenar + bilezik)`** — `distorch.calibrate`'i çalıştırır:
   CNN başlangıç değeri verir, sonra delikler + kenarlar çözülür (aşama 1) ve
   bilezikler ölçülür (aşama 2). Çıktı **geometrik çözümdür**. ~1.5 sn sürer.
 
-Aradaki fark ölçülebilir — `ACO_ANKA_0045` karesinde:
+**"Sadece CNN" seçeneği kaldırıldı.** Sahada ölçüldü: CNN'in tek başına verdiği
+θ ile aynı şişe üç konumda **%6.27** yayılım veriyordu, tam sistemle **%1.84**.
+CNN karar vermiyor, başlangıç değeri veriyor — o değeri sonuç diye kullanmanın
+anlamı yok. Tam sistem onu zaten içeride çalıştırıyor.
 
-| mod | köşe hatası |
-|---|---|
-| sadece CNN | — (başlangıç değeri, kapı yok) |
-| tam sistem, bilezik kapalı | 3.08 px |
-| **tam sistem, bilezik açık** | **0.92 px** |
+Aradaki fark `ACO_ANKA_0045` karesinde: bilezik kapalı 3.08 px, açık **0.92 px**.
+
+`sapma düzeltmesi` kutucuğu da kaldırıldı: sadece CNN modunu etkiliyordu,
+`distorch.calibrate` sapmayı kendi içinde her zaman uyguluyor.
 
 ### Kalibrasyon nasıl yapılıyor
 

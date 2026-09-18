@@ -179,79 +179,6 @@ def theta_from_profile(path):
     return th, float(d.get("roll_deg") or 0.0)
 
 
-# --------------------------------------------------------------- distort CNN
-
-class DistortNet:
-    """distort_v2 / v3 vb. cikarim. Agirlik + meta dosyasi disaridan verilir."""
-
-    INPUT = (512, 288)
-    MID = (960, 540)
-    MEAN = np.array([0.485, 0.456, 0.406], np.float32)
-    STD = np.array([0.229, 0.224, 0.225], np.float32)
-
-    def __init__(self, weights, meta=None, bias=None):
-        try:
-            import torch, torchvision
-            import torch.nn as nn
-        except ImportError as e:
-            raise RuntimeError(
-                f"torch/torchvision yok ({e}). Kurmak icin: ./setup.sh") from e
-        self.torch = torch
-        wp = Path(weights)
-        mp = Path(meta) if meta else Path(str(wp).replace(".pt", "_meta.json"))
-        bp = Path(bias) if bias else Path(str(wp).replace(".pt", "_bias.json"))
-        self.meta = json.loads(mp.read_text()) if mp.exists() else {}
-        self.bias = (json.loads(bp.read_text()).get("sapma_medyan")
-                     if bp.exists() else None) or {"m1": 0, "m2": 0, "cx": 0, "cy": 0}
-
-        class Net(nn.Module):
-            def __init__(s, hid=256, ch=64):
-                super().__init__()
-                m = torchvision.models.resnet18(weights=None)
-                s.body = nn.Sequential(m.conv1, m.bn1, m.relu, m.maxpool,
-                                       m.layer1, m.layer2, m.layer3, m.layer4)
-                fw, fh = DistortNet.INPUT[0] // 32, DistortNet.INPUT[1] // 32
-                ys = torch.linspace(-1, 1, fh).view(fh, 1).expand(fh, fw)
-                xs = torch.linspace(-1, 1, fw).view(1, fw).expand(fh, fw)
-                s.register_buffer("coords",
-                                  torch.stack([xs, ys, xs * xs + ys * ys], 0).unsqueeze(0),
-                                  persistent=False)
-                s.reduce = nn.Sequential(nn.Conv2d(515, ch, 1), nn.BatchNorm2d(ch),
-                                         nn.ReLU(inplace=True))
-                s.head = nn.Sequential(nn.Linear(ch * fh * fw, hid), nn.ReLU(inplace=True),
-                                       nn.Dropout(0.1), nn.Linear(hid, 4))
-
-            def forward(s, x):
-                z = s.body(x)
-                z = s.reduce(torch.cat([z, s.coords.expand(z.shape[0], -1, -1, -1)], 1))
-                return s.head(z.flatten(1))
-
-        self.net = Net()
-        self.net.load_state_dict(torch.load(str(wp), map_location="cpu", weights_only=True))
-        self.net.eval()
-        self.name = wp.name
-
-    def theta(self, frame, correct_bias=True):
-        g = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        if (g.shape[1], g.shape[0]) != self.MID:
-            g = cv2.resize(g, self.MID, interpolation=cv2.INTER_AREA)
-        g = cv2.resize(g, self.INPUT, interpolation=cv2.INTER_AREA)
-        x = (np.stack([g] * 3, -1).astype(np.float32) / 255.0 - self.MEAN) / self.STD
-        t = self.torch.from_numpy(x.transpose(2, 0, 1).copy()).unsqueeze(0)
-        with self.torch.no_grad():
-            o = self.net(t)[0].numpy().astype(np.float64)
-        nm = self.meta.get("norm")
-        if nm:
-            o = o * np.asarray(nm["std"]) + np.asarray(nm["mean"])
-        m1, m2, cx, cy = (float(v) for v in o)
-        if correct_bias:
-            b = self.bias
-            m1 -= b["m1"]; m2 -= b["m2"]; cx -= b["cx"]; cy -= b["cy"]
-        k1, k2 = kk_from_mags(m1, m2, tuple(self.meta.get("anchors", ANCHORS)))
-        return {"k1": k1, "k2": k2, "cx": cx, "cy": cy, "f": CANON_F,
-                "m1": m1, "m2": m2}
-
-
 def kare_ortala(kareler):
     """N kareyi ortala. Sahne hareketsizken gurultu sqrt(N) kadar duser;
     bilezik tespiti esigin sinirinda oldugu icin bu farki goruyor."""
@@ -556,7 +483,6 @@ class Panel(_TkTaban):
         super().__init__()
         self.title("Test paneli")
         self.cam = None
-        self.net = None
         self.yolo = None
         self.theta = None
         self.roll = 0.0
@@ -577,8 +503,6 @@ class Panel(_TkTaban):
 
         self.v_mode = tk.StringVar(value="kapali")  # kapali|profil|model|sistem
         self.v_prof = tk.StringVar(value="")
-        self.v_wts = tk.StringVar(value="")
-        self.v_bias = tk.BooleanVar(value=True)
         self.v_level = tk.BooleanVar(value=True)     # roll hep acik, aci 0.000
         self.v_rolltxt = tk.StringVar(value="0.000")
 
@@ -657,21 +581,13 @@ class Panel(_TkTaban):
         c = box("1) DISTORSIYON DUZELTME   (distorch agirligi / profil)")
         for t, v in (("kapali (ham)", "kapali"),
                      ("profil JSON", "profil"),
-                     ("1) sadece CNN   (.pt agirligi)", "model"),
-                     ("2) CNN + delik + kenar + bilezik   (tam sistem)", "sistem")):
+                     ("distorch tam sistem   (CNN + delik + kenar + bilezik)", "sistem")):
             ttk.Radiobutton(c, text=t, value=v, variable=self.v_mode,
                             command=self._reset_theta).pack(anchor="w")
         r = ttk.Frame(c); r.pack(fill="x", pady=2)
         ttk.Entry(r, textvariable=self.v_prof).pack(side="left", fill="x", expand=True)
         ttk.Button(r, text="...", width=3,
                    command=lambda: self._pick(self.v_prof, [("profil", "*.json")])).pack(side="left")
-        r = ttk.Frame(c); r.pack(fill="x", pady=2)
-        ttk.Entry(r, textvariable=self.v_wts).pack(side="left", fill="x", expand=True)
-        ttk.Button(r, text="...", width=3,
-                   command=lambda: self._pick(self.v_wts, [("distorch agirligi", "*.pt")],
-                                              want="distorch")).pack(side="left")
-        ttk.Checkbutton(c, text="sapma duzeltmesi (bias json varsa)",
-                        variable=self.v_bias, command=self._reset_theta).pack(anchor="w")
         r = ttk.Frame(c); r.pack(fill="x")
         ttk.Checkbutton(r, text="roll'u sifirla", variable=self.v_level,
                         command=self._reset_maps).pack(side="left")
@@ -779,13 +695,12 @@ class Panel(_TkTaban):
         onlar makineye ozel.
         """
         self.v_mode.set("sistem")           # CNN + delik + kenar + bilezik
-        self.v_bias.set(True)               # sapma duzeltmesi
         self.v_level.set(True)              # roll hep acik
         self.v_rolltxt.set("0.000")         # aci 0 -> kare dondurulmuyor
         self._cut_yukle(KESME_KAYITLI)      # kesme 28/16/10/5
         self.v_retina.set(True)             # olcum maskesi tam cozunurlukte
         self._reset_theta()                 # theta yeniden cozulsun
-        n = ["sistem (CNN+delik+kenar+bilezik)", "sapma duzeltmesi",
+        n = ["distorch tam sistem (CNN+delik+kenar+bilezik)",
              "kesme {ust:.0f}/{alt:.0f}/{sol:.0f}/{sag:.0f}".format(**KESME_KAYITLI),
              "olcek 1.0", "retina_masks"]
         if self.v_yolo_w.get():
@@ -846,7 +761,6 @@ class Panel(_TkTaban):
 
     def _reset_theta(self):
         self.theta = None
-        self.net = None
         self.rapor = None
         self.sistem_ozet = ""
         self._reset_maps()
@@ -960,21 +874,7 @@ class Panel(_TkTaban):
                 finally:
                     self._cozuluyor = False
             return self.theta
-        if self.net is None and self.v_wts.get():
-            try:
-                self.status.set("model yukleniyor...")
-                self.update_idletasks()
-                self.net = DistortNet(self.v_wts.get())
-                self.status.set(f"model: {self.net.name}")
-            except Exception as e:
-                self.status.set(f"model yuklenemedi: {e}")
-                self.v_mode.set("kapali")
-                return None
-        if self.net is None:
-            return None
-        if self.theta is None:                       # ilk karede bir kez cozulur
-            self.theta = self.net.theta(frame, self.v_bias.get())
-        return self.theta
+        return None
 
     def correct(self, frame):
         th = self._get_theta(frame)
@@ -1148,7 +1048,6 @@ class Panel(_TkTaban):
         d = self.out / f"{tag}_{stamp}"
         d.mkdir(parents=True, exist_ok=True)
         meta = {"etiket": tag, "zaman": stamp, "mod": self.v_mode.get(),
-                "sapma_duzeltmesi": bool(self.v_bias.get()),
                 "kesme": {k: round(v.get(), 2) for k, v in self.v_cut.items()},
                 "kamera": {"aygit": self.v_dev.get(), "format": self.v_fourcc.get(),
                            "cozunurluk": list(self.cam.real)},
