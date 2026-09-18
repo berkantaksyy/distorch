@@ -6,7 +6,8 @@ takes out about 40% of the circle. Loosening the filters lets the bar's own
 curve in as false circles.
 
 Three steps instead:
-  1. seed    find a few rings globally (1-3 is enough)
+  1. seed    find a few rings globally (1-3 is enough). Twice if needed: on the
+             raw frame, then on the corrected one where they are round again.
   2. predict compute where the rest must be, from theta - coordinates only,
              the image is never resampled
   3. measure fit an ellipse in a small window around each prediction
@@ -21,7 +22,7 @@ stands.
 import numpy as np
 import cv2
 
-from distorch import geom as G
+from distorch import geom as G, holes as H, roll as RL
 
 TOP_PAD, BOTTOM_PAD = 160, 260
 TOPHAT_SE = 17          # keeps thin bright structures, drops the thick bar
@@ -230,10 +231,32 @@ def check_ratio(found, hole_row, theta):
     return ratio, (RATIO_MIN <= ratio <= RATIO_MAX)
 
 
-def find(gray, filled_mask, theta, hole_row=None, rounds=2):
-    """-> (rings, info). Rings are dropped when the ratio check fails: better to
-    skip stage 2 than to corrupt theta with a false detection."""
-    found = seeds(gray, filled_mask)
+def seeds_corrected(gray, filled_mask, theta):
+    """Seeds found on the CORRECTED frame, carried back to raw coordinates.
+
+    In the raw frame a ring is a distorted ellipse and HoughCircles looks for
+    circles, so most of them are missed. Correcting with the stage-1 theta makes
+    them round again and the same detector finds far more.
+
+    Only the SEARCH moves. Every centre is measured again on RAW pixels by
+    measure(), so the sub-pixel accuracy is exactly the one the raw path gives.
+    """
+    g8 = gray if gray.dtype == np.uint8 else np.clip(gray, 0, 255).astype(np.uint8)
+    try:
+        straight = RL.undistort_image(g8, theta, 0.0).astype(np.float32)
+        _, filled_straight, _ = H.panel_mask(straight)
+    except Exception:
+        return []
+    found = seeds(straight, filled_straight)
+    if not found:
+        return []
+    p = np.array([[h["cx"], h["cy"]] for h in found], float)
+    raw = G.distort_points(p, theta)
+    return measure(gray, filled_mask, [(float(x), float(y)) for x, y in raw])
+
+
+def _grow(found, gray, filled_mask, theta, hole_row, rounds):
+    """Seed set -> full set: predict/measure rounds, then the ratio gate."""
     info = {"n_seeds": len(found), "ratio": None, "ratio_ok": False}
     if not found:
         return [], info
@@ -248,6 +271,37 @@ def find(gray, filled_mask, theta, hole_row=None, rounds=2):
     info["ratio"], info["ratio_ok"] = ratio, ok
     if len(found) >= 3 and not ok:
         return [], info
+    return found, info
+
+
+def find(gray, filled_mask, theta, hole_row=None, rounds=2):
+    """-> (rings, info). Rings are dropped when the ratio check fails: better to
+    skip stage 2 than to corrupt theta with a false detection.
+
+    Two attempts. The first seeds on the raw frame. Only when that fails to
+    produce a usable set does the second seed on the corrected frame; the raw
+    path is never touched when it works, so nothing that used to pass can start
+    failing.
+
+    Measured on the 104-frame field set:
+        seeding          rings used   no rings   corner median   per frame
+        raw only            47/104         23       2.518 px       0.17 s
+        corrected only      61/104          8       2.591 px       0.23 s
+        both (this)         70/104          1       2.433 px       0.22 s
+    Against raw only: 81 frames identical, 23 better, 0 worse.
+    """
+    found, info = _grow(seeds(gray, filled_mask),
+                        gray, filled_mask, theta, hole_row, rounds)
+    if len(found) >= 3 and info["ratio_ok"]:
+        info["seed_source"] = "raw"
+        return found, info
+
+    alt, alt_info = _grow(seeds_corrected(gray, filled_mask, theta),
+                          gray, filled_mask, theta, hole_row, rounds)
+    if len(alt) > len(found):
+        alt_info["seed_source"] = "corrected"
+        return alt, alt_info
+    info["seed_source"] = "raw"
     return found, info
 
 
