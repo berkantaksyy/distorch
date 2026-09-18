@@ -595,6 +595,7 @@ class Panel(_TkTaban):
         self.v_tag = tk.StringVar(value="test")
 
         self._cozuluyor = False     # theta cozumu surerken tekrar girilmesin
+        self._duyuru = ("", 0.0)    # kalici mesaj (metin, bitis zamani)
         self.oturum = None          # adimli cekim oturumu (None = oturum yok)
         self.rapor = None           # distorch tam sistem raporu (sistem modu)
         self.sistem_ozet = ""       # durum cubugunda kalici kalsin diye
@@ -736,6 +737,15 @@ class Panel(_TkTaban):
         self.lbl_out.pack(anchor="w")
         self._adim_yaz()                     # dugme yazisini "KARE AL (1/N)" yap
 
+    def _duyur(self, mesaj, sn=8.0):
+        """Durum cubugunda BIR SURE kalan mesaj.
+
+        _tick her 40 ms'de durum cubugunu bastan yaziyor; oraya dogrudan
+        yazilan her mesaj goze carpmadan siliniyordu.
+        """
+        self._duyuru = (mesaj, time.time() + sn)
+        self.status.set(mesaj)
+
     def _out_hazirla(self, p):
         """Cikti klasoru yazilamiyorsa panel acilmadan cokmesin, /tmp'ye dus."""
         for aday in (p, Path("/tmp") / "panel_cikti"):
@@ -751,6 +761,17 @@ class Panel(_TkTaban):
         return p
 
     def _hazir_ayar(self):
+        """Dugmenin kendisi. Ici patlarsa sessiz kalmasin, ekrana yazsin."""
+        try:
+            self._hazir_ayar_gercek()
+        except Exception as e:
+            import traceback
+            iz = traceback.format_exc().strip().splitlines()[-3:]
+            self._duyur(f"AYAR KURULAMADI: {type(e).__name__}: {e}", 20)
+            messagebox.showerror("ayarlar kurulamadi",
+                                 f"{type(e).__name__}: {e}\n\n" + "\n".join(iz))
+
+    def _hazir_ayar_gercek(self):
         """Olcum ayarlarinin hepsini tek tusla kur.
 
         Ciktiyi degistiren her ayar burada; cikis olcegi zaten kalici olarak 1.0.
@@ -773,7 +794,7 @@ class Panel(_TkTaban):
             n.append("yolo acik")
         else:
             n.append("YOLO agirligi secili degil - elle sec")
-        self.status.set("ayarlar kuruldu: " + ", ".join(n))
+        self._duyur("ayarlar kuruldu: " + ", ".join(n))
 
     def _cut_yukle(self, ayar):
         """Kaydiricilari ve yanlarindaki sayilari birlikte set et.
@@ -933,7 +954,7 @@ class Panel(_TkTaban):
                     self.status.set(self.sistem_ozet.strip())
                 except Exception as e:
                     self.sistem_ozet = ""
-                    self.status.set(f"distorch calismadi: {e}")
+                    self._duyur(f"distorch calismadi: {e}", 20)
                     self.v_mode.set("kapali")
                     return None
                 finally:
@@ -1061,6 +1082,8 @@ class Panel(_TkTaban):
                         s += self.sistem_ozet
                     if det:
                         s += f"   {len(det)} tespit"
+                    if time.time() < self._duyuru[1]:
+                        s += "   |  " + self._duyuru[0]
                     self.status.set(s)
                 except Exception as e:
                     self.status.set(f"hata: {type(e).__name__}: {e}")
@@ -1188,7 +1211,7 @@ class Panel(_TkTaban):
             cv2.imwrite(str(d / "ozet_yolo.jpg"), kare, [cv2.IMWRITE_JPEG_QUALITY, 90])
             meta["ozet"] = "ozet_yolo.jpg"
         (d / "kayit.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
-        self.status.set(f"{len(meta['kareler'])} kare + ozet -> {d}")
+        self._duyur(f"{len(meta['kareler'])} kare + ozet -> {d}")
         self._adim_yaz(f"kaydedildi: {d.name}", renk="#07a")
 
     def _oturum_iptal(self):
@@ -1196,7 +1219,7 @@ class Panel(_TkTaban):
         if self.oturum is None:
             return
         o, self.oturum = self.oturum, None
-        self.status.set(f"iptal edildi - {o['sayac']} kare {o['dir']} icinde kaldi")
+        self._duyur(f"iptal edildi - {o['sayac']} kare {o['dir']} icinde kaldi")
         self._adim_yaz("iptal edildi", renk="#a00")
 
     def _quit(self):
