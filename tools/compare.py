@@ -81,12 +81,19 @@ def _largest_inner_rect(valid):
     return best[1:]
 
 
-def crop_tight(img, theta, up=0.45, down=0.55, side=0.18):
+def crop_tight(img, theta, up=0.45, down=0.55, side=0.18, kes=False):
     """Crop to the chamber opening, the way the existing production correction
     frames it: panel bounding box grown by a fraction of its own size, then
     clipped to the region that has real source pixels.
 
     This HIDES the outer residual, it does not fix it.
+
+    kes=False IS THE DEFAULT AND CROPS NOTHING. The corrected frame comes back
+    whole, offset (0, 0), and the panel is never even looked for. Cropping is
+    opt-in here, exactly the way the panel does it: its four sliders sit at 0
+    until somebody moves them. kes=True brings back the panel-relative crop
+    described below; the CLI --tight passes it, and --up/--down/--side set the
+    amounts without editing this file.
 
     down was 0.25 and cut the bottom off: bottles sit low, on the belt below the
     panel, and were being lost. Measured over 40 frames, the room below the
@@ -97,6 +104,8 @@ def crop_tight(img, theta, up=0.45, down=0.55, side=0.18):
     already means full width.
     """
     out, _ = undistort_image(img, theta)
+    if not kes:
+        return out, (0, 0)
     grey = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY).astype(np.float32)
     _, filled, _ = H.panel_mask(grey)
     ys, xs = np.nonzero(filled)
@@ -143,17 +152,18 @@ def crop_to_valid(img, theta, margin=2):
     return out[y0:y1, x0:x1], (x0, y0)
 
 
-def _to_view(img, theta, mode):
+def _to_view(img, theta, mode, kes_orani=None):
     """-> (image, point mapper). The mapper takes raw points to view pixels.
 
     mode: "full" fills the frame · "fit" scales everything in · "crop" keeps
-    only the region that has real source pixels.
+    only the region that has real source pixels · "tight" is the only mode that
+    crops around the panel, and it has to ask for it (crop_tight kes=True).
     """
     if theta is None:
         return img, (lambda p: p)
     if mode in ("crop", "tight"):
-        fn = crop_to_valid if mode == "crop" else crop_tight
-        out, (x0, y0) = fn(img, theta)
+        out, (x0, y0) = (crop_to_valid(img, theta) if mode == "crop" else
+                         crop_tight(img, theta, kes=True, **(kes_orani or {})))
         return out, (lambda p: G.undistort_points(p, theta) - np.array([x0, y0]))
     out, tf = undistort_image(img, theta, fit=(mode == "fit"))
     if mode != "fit":
@@ -199,7 +209,7 @@ def _panel(img, holes, rings, title, colour, ring_colour=(255, 120, 0)):
     return cv2.resize(out, (VIEW_W, int(out.shape[0] * VIEW_W / out.shape[1])))
 
 
-def visual(name, mode="full"):
+def visual(name, mode="full", kes_orani=None):
     path = D.FRAMES_DIR / f"{name}.jpg"
     if not path.exists():
         sys.exit(f"frame not found: {path}")
@@ -227,7 +237,7 @@ def visual(name, mode="full"):
             (f"{name}  HAM (duzeltmesiz)", None, (0, 0, 255)),
             (f"{name}  MODEL ile (distort_v3)", theta_net, (0, 140, 255)),
             (f"{name}  SISTEM ile (distorch)", r["theta"], (0, 160, 0))):
-        view, to_view = _to_view(img, theta, mode)
+        view, to_view = _to_view(img, theta, mode, kes_orani)
         panels.append(_panel(view, to_view(holes),
                              None if rings is None else to_view(rings),
                              title, colour))
@@ -294,10 +304,18 @@ if __name__ == "__main__":
     ap.add_argument("--crop", action="store_true",
                     help="crop to the region that has real source pixels")
     ap.add_argument("--tight", action="store_true",
-                    help="crop tightly around the chamber opening (hides the outer residual)")
+                    help="crop tightly around the chamber opening (hides the outer residual); "
+                         "without this flag nothing is cropped")
+    ap.add_argument("--up", type=float, default=0.45,
+                    help="--tight: grow the panel box upwards by this fraction of its height")
+    ap.add_argument("--down", type=float, default=0.55,
+                    help="--tight: grow it downwards (0.55 keeps the ring row and the belt)")
+    ap.add_argument("--side", type=float, default=0.18,
+                    help="--tight: grow it sideways by this fraction of its width")
     a = ap.parse_args()
     mode = "tight" if a.tight else ("crop" if a.crop else ("fit" if a.fit else "full"))
     if a.frame:
-        visual(a.frame, mode=mode)
+        visual(a.frame, mode=mode,
+               kes_orani={"up": a.up, "down": a.down, "side": a.side})
     else:
         table()
