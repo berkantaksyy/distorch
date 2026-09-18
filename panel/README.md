@@ -113,16 +113,9 @@ Tam sistem `reject` verirse panel o θ'yı **kullanmaz**: boş/bozuk karede çö
 sınıra dayanıp k1=3.0 gibi bir değer döndürebiliyor, o durumda mod kapanır ve
 durum çubuğu sebebini yazar.
 
-**Kadraj** — `kesme yok` (varsayılan) / `tam`:
-
-- `kesme yok` — düzeltilmiş kadrajın **tamamı** 1920×1080 tuvalin içine sığdırılır.
-  Hiçbir şey kesilmez, kenarlarda siyah yaylar kalır. Ölçek çıkış odağıyla
-  ayarlanıyor (`f` bir ölçüm değil, distorch'un kendi deyişiyle bir seçim).
-- `tam` — tuval dolar ama **ham karenin dış %32'si dışarıda kalır**. Eski davranış.
-
-Durum çubuğu hangisinde olduğunu ve ölçeği yazar (`kadraj sigdir k=0.794`).
-**`mm/px`'i hangi kadrajda ölçtüysen o kadrajda kullan** — ölçek değişince
-piksel başına mm de değişir.
+**Çıkış ölçeği her zaman 1.0.** Cisim kaç pikselse o kalır. Bir ara "tüm kadrajı
+küçültüp tuvale sığdır" seçeneği vardı, kaldırıldı: ölçüm çözünürlüğünü %24
+düşürüyordu ve kazandırdığı kenarlar zaten `Kesme` ile atılıyordu.
 
 θ ilk karede bir kez çözülür, sonra sabit kalır — boş hazneyi bir kez kalibre
 edip sonra şişeyle test edebilmen için. Modeli/profili değiştirince sıfırlanır.
@@ -178,7 +171,7 @@ cikti/test_20260918_141203/
   kayit.json            # 3 kareye ait tek json
 ```
 
-`kayit.json` içinde: mod, kadraj ve ölçeği, sapma düzeltmesi açık mıydı, kesme
+`kayit.json` içinde: mod, sapma düzeltmesi açık mıydı, kesme
 ayarları, kamera, kullanılan YOLO ağırlığı/ayarları ve her karenin θ'sı. Tam sistem
 modundaysa ayrıca `distorch` bölümü: verdict, bulunan bilezik sayısı, köşe
 hatası, `mm_per_px_panel`.

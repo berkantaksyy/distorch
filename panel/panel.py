@@ -131,44 +131,16 @@ def rotation(deg, size):
                      [sa, ca, cy - sa * cx - ca * cy]], float)
 
 
-def fit_scale(th, size, n=200):
-    """Duzeltilmis karenin TAMAMI tuvale sigsin diye olcek + kaydirma.
+def build_maps(th, size, roll_deg=0.0):
+    """Tek remap: duzeltme (+ istege bagli duzlestirme). Kare bir kez ornekleniyor.
 
-    Duzeltmede en cok tasan yer koseler degil KENAR ORTALARI: sadece 4 koseye
-    bakan hesap 1920x1080'de ustte ~60 px disarida birakiyor (olculdu). O yuzden
-    kenar boyunca ornekliyoruz.
-
-    Tuval 1920x1080 kaliyor; degisen tek sey cikis odagi. distorch'un kendi
-    notu: "f is fixed: straightness cannot observe focal length, and the k
-    coefficients absorb the choice" - yani f bir olcum degil, secim.
-    """
-    w, h = size
-    t = np.linspace(0.0, 1.0, n)
-    z, bir = np.zeros_like(t), np.ones_like(t)
-    border = np.vstack([np.column_stack([t * (w - 1), z]),
-                        np.column_stack([t * (w - 1), bir * (h - 1)]),
-                        np.column_stack([z, t * (h - 1)]),
-                        np.column_stack([bir * (w - 1), t * (h - 1)])])
-    u = undistort_points(border, th)
-    lo, hi = u.min(0), u.max(0)
-    k = float(min(w / max(hi[0] - lo[0], 1e-9), h / max(hi[1] - lo[1], 1e-9)))
-    off = np.array([w, h], float) / 2.0 - (lo + hi) / 2.0 * k
-    return k, off
-
-
-def build_maps(th, size, roll_deg=0.0, fit=None):
-    """Tek remap: duzeltme (+ istege bagli kadraj ve duzlestirme).
-
-    fit=(k, off) verilirse hicbir sey kesilmez: duzeltilmis kadrajin tamami
-    tuvalin icine sigdirilir, kenarlarda siyah yaylar kalir. fit=None eski
-    davranis - tuval dolar ama ham karenin dis %32'si disarida kalir.
+    Cikis olcegi HER ZAMAN 1.0: cisim kac pikselse o kalir. Kucultup tum kadraji
+    tuvale sigdirma secenegi vardi, kaldirildi - olcum cozunurlugunu dusuruyordu
+    ve kazandirdigi kenarlar zaten Kesme ile atiliyordu.
     """
     w, h = size
     gy, gx = np.mgrid[0:h, 0:w].astype(np.float64)
     p = np.stack([gx.ravel(), gy.ravel()], 1)
-    if fit is not None:
-        k, off = fit
-        p = (p - off) / k
     if roll_deg:
         m = rotation(-roll_deg, size)
         p = p @ m[:, :2].T + m[:, 2]
@@ -576,7 +548,6 @@ class Panel(_TkTaban):
         self.v_fourcc = tk.StringVar(value=args.fourcc)
 
         self.v_mode = tk.StringVar(value="kapali")  # kapali|profil|model|sistem
-        self.v_kadraj = tk.StringVar(value="sigdir")   # sigdir (kesme yok) | tam
         self.v_prof = tk.StringVar(value="")
         self.v_wts = tk.StringVar(value="")
         self.v_bias = tk.BooleanVar(value=True)
@@ -598,7 +569,6 @@ class Panel(_TkTaban):
         self.oturum = None          # adimli cekim oturumu (None = oturum yok)
         self.rapor = None           # distorch tam sistem raporu (sistem modu)
         self.sistem_ozet = ""       # durum cubugunda kalici kalsin diye
-        self.fit_k = None           # kadraj olcegi; None = kesme var (tam)
         self._det = []              # onizlemede yeniden kullanilan son tespit
         self._det_next = 0.0        # bir sonraki YOLO kosusunun en erken zamani
 
@@ -671,11 +641,6 @@ class Panel(_TkTaban):
                         command=self._reset_maps).pack(side="left")
         ttk.Entry(r, textvariable=self.v_rolltxt, width=8).pack(side="left", padx=4)
         ttk.Label(r, text="derece").pack(side="left")
-        r = ttk.Frame(c); r.pack(fill="x", pady=(4, 0))
-        ttk.Label(r, text="kadraj").pack(side="left")
-        for t, v in (("kesme yok", "sigdir"), ("tam (kenar kesilir)", "tam")):
-            ttk.Radiobutton(r, text=t, value=v, variable=self.v_kadraj,
-                            command=self._reset_maps).pack(side="left", padx=(6, 0))
 
         # kesme
         c = box("Kesme  (duzeltmeden SONRA, % olarak)")
@@ -887,16 +852,13 @@ class Panel(_TkTaban):
         h, w = frame.shape[:2]
         t = th if (w, h) == (1920, 1080) else scale_theta(th, w / 1920.0)
         roll = _sayi(self.v_rolltxt, 0.0, float) if self.v_level.get() else 0.0
-        sigdir = self.v_kadraj.get() == "sigdir"
         key = (round(t["k1"], 6), round(t["k2"], 6), round(t["cx"], 2),
-               round(t["cy"], 2), w, h, round(roll, 4), sigdir)
+               round(t["cy"], 2), w, h, round(roll, 4))
         if self.maps is None or self.maps_key != key:
             # 1920x1080'de 1-2 sn suruyor; donma sanilmasin diye haber ver
             self.status.set("haritalar hazirlaniyor...")
             self.update_idletasks()
-            fit = fit_scale(t, (w, h)) if sigdir else None
-            self.fit_k = fit[0] if fit else None
-            self.maps = build_maps(t, (w, h), roll, fit)
+            self.maps = build_maps(t, (w, h), roll)
             self.maps_key = key
         return cv2.remap(frame, self.maps[0], self.maps[1], cv2.INTER_LINEAR), th
 
@@ -986,8 +948,6 @@ class Panel(_TkTaban):
                          f"{img.shape[1]}x{img.shape[0]}")
                     if th:
                         s += f"   k1 {th['k1']:+.4f} k2 {th['k2']:+.4f} cx {th['cx']:.0f} cy {th['cy']:.0f}"
-                        s += (f"   kadraj sigdir k={self.fit_k:.3f}" if self.fit_k
-                              else "   kadraj tam (kenar kesiliyor)")
                         s += self.sistem_ozet
                     if det:
                         s += f"   {len(det)} tespit"
@@ -1055,8 +1015,6 @@ class Panel(_TkTaban):
         d = self.out / f"{tag}_{stamp}"
         d.mkdir(parents=True, exist_ok=True)
         meta = {"etiket": tag, "zaman": stamp, "mod": self.v_mode.get(),
-                "kadraj": self.v_kadraj.get(),
-                "kadraj_olcek": None if self.fit_k is None else round(self.fit_k, 4),
                 "sapma_duzeltmesi": bool(self.v_bias.get()),
                 "kesme": {k: round(v.get(), 2) for k, v in self.v_cut.items()},
                 "kamera": {"aygit": self.v_dev.get(), "format": self.v_fourcc.get(),
