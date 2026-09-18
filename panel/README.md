@@ -76,6 +76,41 @@ panel acilabilir.
 Loglar: `/tmp/panel_sys.log`, `panel_venv.log`, `panel_core.log`,
 `panel_torch.log`, `panel_extra.log`.
 
+## Tek tuş: `OLCUM AYARLARINI KUR`
+
+Sağ sütunun en üstündeki yeşil düğme ölçüm ayarlarının hepsini birden kurar:
+
+| ayar | değer |
+|---|---|
+| mod | `2) CNN + delik + kenar + bilezik (tam sistem)` |
+| sapma düzeltmesi | açık |
+| roll düzleştirme | kapalı |
+| kesme | 28 / 16 / 10 / 5 |
+| çıkış ölçeği | 1.0 (zaten kalıcı) |
+| `retina_masks` | açık |
+| YOLO | ağırlık seçiliyse `çalıştır` açılır |
+
+θ'yı da sıfırlar, yani bir sonraki karede yeniden çözülür. **Hazne boşken bas.**
+Kameraya (aygıt / çözünürlük / format) ve YOLO ağırlık yoluna dokunmaz — onlar
+makineye özel.
+
+## İşlem sırası
+
+```
+1. ham kare              1920x1080, kameradan geldigi gibi
+2. distorch tam sistem   CNN -> delik -> kenar -> solve -> bilezik -> theta
+                         (ILK KAREDE BIR KEZ, sonra sabit)
+3. duzeltme (remap)      olcek 1.0, kirpma yok
+4. KESME                 senin dort kaydiricin  <-- kesme BURADA
+5. YOLO                  tespit + maskeden olcum
+```
+
+**Kesme dördüncü sırada** — distorch'tan da düzeltmeden de sonra. Bu yüzden
+distorch'u etkilemiyor: θ çözülürken kare henüz kesilmemiş oluyor. Ters sırada
+olsaydı çalışmazdı; `distorch/net.py` bunu açıkça söylüyor: *"NO cropping (the
+corners carry the centre information)"* — ayrıca delikler ve panel kenarları
+kadrajın kenarlarında, kesilirse çözüm dayanağını kaybeder.
+
 ## Bölümler
 
 **Kamera** — aygıt, çözünürlük, fps, format. Varsayılan **1920×1080, YUYV

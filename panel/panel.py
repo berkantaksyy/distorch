@@ -587,6 +587,12 @@ class Panel(_TkTaban):
         right.pack(side="right", fill="y")
         right.pack_propagate(False)
 
+        # Tek tus: olcum icin kullandigimiz butun ayarlari kurar.
+        tk.Button(right, text="OLCUM AYARLARINI KUR",
+                  font=("", 11, "bold"), bg="#0a0", fg="white",
+                  activebackground="#080", command=self._hazir_ayar
+                  ).pack(fill="x", pady=(0, 6))
+
         self.canvas = tk.Label(left, background="#111")
         self.canvas.pack(fill="both", expand=True)
         ttk.Label(left, textvariable=self.status, wraplength=self.preview_w).pack(
@@ -714,6 +720,30 @@ class Panel(_TkTaban):
             except Exception:
                 continue
         return p
+
+    def _hazir_ayar(self):
+        """Olcum ayarlarinin hepsini tek tusla kur.
+
+        Ciktiyi degistiren her ayar burada; cikis olcegi zaten kalici olarak 1.0.
+        Kameraya (aygit/cozunurluk/format) ve YOLO agirlik yoluna dokunmuyor -
+        onlar makineye ozel.
+        """
+        self.v_mode.set("sistem")           # CNN + delik + kenar + bilezik
+        self.v_bias.set(True)               # sapma duzeltmesi
+        self.v_level.set(False)             # roll duzlestirme kapali
+        self._cut_yukle(KESME_KAYITLI)      # kesme 28/16/10/5
+        self.v_retina.set(True)             # olcum maskesi tam cozunurlukte
+        self._reset_theta()                 # theta yeniden cozulsun
+        n = ["sistem (CNN+delik+kenar+bilezik)", "sapma duzeltmesi",
+             "kesme {ust:.0f}/{alt:.0f}/{sol:.0f}/{sag:.0f}".format(**KESME_KAYITLI),
+             "olcek 1.0", "retina_masks"]
+        if self.v_yolo_w.get():
+            self.v_yolo_on.set(True)
+            self.yolo = None
+            n.append("yolo acik")
+        else:
+            n.append("YOLO agirligi secili degil - elle sec")
+        self.status.set("ayarlar kuruldu: " + ", ".join(n))
 
     def _cut_yukle(self, ayar):
         """Kaydiricilari ve yanlarindaki sayilari birlikte set et.
