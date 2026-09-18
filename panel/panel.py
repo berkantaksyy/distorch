@@ -70,8 +70,11 @@ except Exception as _e:                      # ImportError veya TclError
 CANON_F = 1920.0
 ANCHORS = (0.30, 0.60)
 
-# Sahada kullanilan kesme ayari. "kayitli ayar" dugmesi bunu yukluyor.
-KESME_KAYITLI = {"ust": 28.0, "alt": 16.0, "sol": 10.0, "sag": 5.0}
+# Sahada kullanilan kesme ayari. "kayitli ayar" dugmesi ve
+# "OLCUM AYARLARINI KUR" bunu yukluyor.
+# Yuzdeler DUZELTILMIS kareye gore; duzeltme kadraji degistirdigi icin ham
+# karedeki ayni bolge farkli yuzdelere denk geliyor. 28/16/10/5 fazla kesiyordu.
+KESME_KAYITLI = {"ust": 17.0, "alt": 13.0, "sol": 0.0, "sag": 0.0}
 
 
 # --------------------------------------------------------------- geometri

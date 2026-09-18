@@ -85,7 +85,7 @@ Sağ sütunun en üstündeki yeşil düğme ölçüm ayarlarının hepsini birde
 | mod | `2) CNN + delik + kenar + bilezik (tam sistem)` |
 | sapma düzeltmesi | açık |
 | roll düzleştirme | kapalı |
-| kesme | 28 / 16 / 10 / 5 |
+| kesme | 17 / 13 / 0 / 0 |
 | çıkış ölçeği | 1.0 (zaten kalıcı) |
 | `retina_masks` | açık |
 | YOLO | ağırlık seçiliyse `çalıştır` açılır |
@@ -178,7 +178,11 @@ bir koşu 1–2 saniye sürüyor, her karede çalıştırılsa arayüz hiç nefe
 `KARE AL`'da böyle bir bekleme yok: kaydedilen her kare kendi tespitiyle kaydedilir.
 
 **Kesme** için `kayitli ayar` düğmesi sahada kullanılan değerleri yükler:
-üst 28 / alt 16 / sol 10 / sağ 5. `sifirla` hepsini 0 yapar.
+üst 17 / alt 13 / sol 0 / sağ 0 → çıktı 1920×757. `sifirla` hepsini 0 yapar.
+
+Yüzdeler **düzeltilmiş** kareye göre. Düzeltme kadrajı değiştirdiği için ham
+karedeki aynı bölge farklı yüzdelere denk geliyor — eski 28/16/10/5 değerleri
+düzeltmeden sonra gereğinden fazlasını kesiyordu (karenin sadece %48'i kalıyordu).
 
 **Kayıt — adımlı çekim.** `KARE AL` her basışta **tek kare** alır, aralarda
 şişeyi ilerletmeni bekler:
