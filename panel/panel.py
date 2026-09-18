@@ -2,8 +2,9 @@
 """Test paneli - USB kamera, distorsiyon duzeltme, kesme, YOLO. Servis degil.
 
 Tkinter penceresi. Linux/V4L2. macOS'a ozgu hicbir sey yok.
-Kendi kendine yeter: distorch paketini IMPORT ETMEZ, hicbir dosyani degistirmez.
-Matematik (Brown k1,k2 + capa donusumu) burada kopya olarak duruyor.
+Hicbir dosyani degistirmez. Matematik (Brown k1,k2 + capa donusumu) burada
+kopya olarak duruyor; distorch paketi SADECE "bilezik + CNN" modunda, tembel
+sekilde import ediliyor - o mod secilmezse panel distorch'suz da calisir.
 
     ./run.sh                   kur (gerekiyorsa) ve ac
     python3 panel.py
@@ -127,11 +128,44 @@ def rotation(deg, size):
                      [sa, ca, cy - sa * cx - ca * cy]], float)
 
 
-def build_maps(th, size, roll_deg=0.0):
-    """Tek remap: duzeltme (+ istege bagli duzlestirme). Kare bir kez ornekleniyor."""
+def fit_scale(th, size, n=200):
+    """Duzeltilmis karenin TAMAMI tuvale sigsin diye olcek + kaydirma.
+
+    Duzeltmede en cok tasan yer koseler degil KENAR ORTALARI: sadece 4 koseye
+    bakan hesap 1920x1080'de ustte ~60 px disarida birakiyor (olculdu). O yuzden
+    kenar boyunca ornekliyoruz.
+
+    Tuval 1920x1080 kaliyor; degisen tek sey cikis odagi. distorch'un kendi
+    notu: "f is fixed: straightness cannot observe focal length, and the k
+    coefficients absorb the choice" - yani f bir olcum degil, secim.
+    """
+    w, h = size
+    t = np.linspace(0.0, 1.0, n)
+    z, bir = np.zeros_like(t), np.ones_like(t)
+    border = np.vstack([np.column_stack([t * (w - 1), z]),
+                        np.column_stack([t * (w - 1), bir * (h - 1)]),
+                        np.column_stack([z, t * (h - 1)]),
+                        np.column_stack([bir * (w - 1), t * (h - 1)])])
+    u = undistort_points(border, th)
+    lo, hi = u.min(0), u.max(0)
+    k = float(min(w / max(hi[0] - lo[0], 1e-9), h / max(hi[1] - lo[1], 1e-9)))
+    off = np.array([w, h], float) / 2.0 - (lo + hi) / 2.0 * k
+    return k, off
+
+
+def build_maps(th, size, roll_deg=0.0, fit=None):
+    """Tek remap: duzeltme (+ istege bagli kadraj ve duzlestirme).
+
+    fit=(k, off) verilirse hicbir sey kesilmez: duzeltilmis kadrajin tamami
+    tuvalin icine sigdirilir, kenarlarda siyah yaylar kalir. fit=None eski
+    davranis - tuval dolar ama ham karenin dis %32'si disarida kalir.
+    """
     w, h = size
     gy, gx = np.mgrid[0:h, 0:w].astype(np.float64)
     p = np.stack([gx.ravel(), gy.ravel()], 1)
+    if fit is not None:
+        k, off = fit
+        p = (p - off) / k
     if roll_deg:
         m = rotation(-roll_deg, size)
         p = p @ m[:, :2].T + m[:, 2]
@@ -231,6 +265,33 @@ class DistortNet:
         k1, k2 = kk_from_mags(m1, m2, tuple(self.meta.get("anchors", ANCHORS)))
         return {"k1": k1, "k2": k2, "cx": cx, "cy": cy, "f": CANON_F,
                 "m1": m1, "m2": m2}
+
+
+def distorch_sistem(frame, use_rings=True):
+    """distorch'un tam sistemi: CNN + delik + kenar + solve (+ bilezik).
+
+    Panel normalde distorch'u IMPORT ETMEZ, matematigi kendi icinde kopya tutar.
+    Bu mod tek istisna ve import tembel: sadece bu mod secilince oluyor, distorch
+    yoksa panel calismaya devam eder.
+
+    CNN karar vermiyor, baslangic degeri veriyor; cikti geometrik cozumdur.
+    use_rings=False -> sadece asama 1 (delik + kenar), bilezik yok.
+    """
+    kok = str(BURASI.parent)
+    if kok not in sys.path:
+        sys.path.insert(0, kok)
+    from distorch import calibrate as C
+    r = C.calibrate(frame, use_net=True, use_rings=use_rings)   # asla raise etmez
+    if "theta" not in r:
+        raise RuntimeError(r.get("reason", "cozulemedi"))
+    if r.get("verdict") == "reject":
+        # DIKKAT: reject verdiginde de bir theta donuyor, ama cozucu sinira
+        # dayanmis olabiliyor (bos karede k1=3.0 cikti, olculdu). Onizlemeyi
+        # sessizce mahvetmesin diye burada duruyoruz.
+        ned = "; ".join(c["message"] for c in r.get("checks", [])
+                        if c.get("level") == "reject")
+        raise RuntimeError(f"reddedildi - {ned or 'kalite kapilari gecilmedi'}")
+    return r
 
 
 def sniff_pt(path):
@@ -440,7 +501,8 @@ class Panel(_TkTaban):
         self.v_fps = tk.IntVar(value=args.fps)
         self.v_fourcc = tk.StringVar(value=args.fourcc)
 
-        self.v_mode = tk.StringVar(value="kapali")     # kapali | profil | model
+        self.v_mode = tk.StringVar(value="kapali")  # kapali|profil|model|sistem
+        self.v_kadraj = tk.StringVar(value="sigdir")   # sigdir (kesme yok) | tam
         self.v_prof = tk.StringVar(value="")
         self.v_wts = tk.StringVar(value="")
         self.v_bias = tk.BooleanVar(value=True)
@@ -458,8 +520,10 @@ class Panel(_TkTaban):
         self.v_n = tk.IntVar(value=args.shots)
         self.v_gap = tk.IntVar(value=args.gap_ms)
         self.v_tag = tk.StringVar(value="test")
-        self.v_saveraw = tk.BooleanVar(value=True)
 
+        self.rapor = None           # distorch tam sistem raporu (sistem modu)
+        self.sistem_ozet = ""       # durum cubugunda kalici kalsin diye
+        self.fit_k = None           # kadraj olcegi; None = kesme var (tam)
         self._det = []              # onizlemede yeniden kullanilan son tespit
         self._det_next = 0.0        # bir sonraki YOLO kosusunun en erken zamani
 
@@ -510,8 +574,10 @@ class Panel(_TkTaban):
 
         # duzeltme
         c = box("1) DISTORSIYON DUZELTME   (distorch agirligi / profil)")
-        for t, v in (("kapali (ham)", "kapali"), ("profil JSON", "profil"),
-                     ("distorch modeli (.pt)", "model")):
+        for t, v in (("kapali (ham)", "kapali"),
+                     ("profil JSON", "profil"),
+                     ("1) sadece CNN   (.pt agirligi)", "model"),
+                     ("2) bilezik + CNN   (distorch tam sistem)", "sistem")):
             ttk.Radiobutton(c, text=t, value=v, variable=self.v_mode,
                             command=self._reset_theta).pack(anchor="w")
         r = ttk.Frame(c); r.pack(fill="x", pady=2)
@@ -530,6 +596,11 @@ class Panel(_TkTaban):
                         command=self._reset_maps).pack(side="left")
         ttk.Entry(r, textvariable=self.v_rolltxt, width=8).pack(side="left", padx=4)
         ttk.Label(r, text="derece").pack(side="left")
+        r = ttk.Frame(c); r.pack(fill="x", pady=(4, 0))
+        ttk.Label(r, text="kadraj").pack(side="left")
+        for t, v in (("kesme yok", "sigdir"), ("tam (kenar kesilir)", "tam")):
+            ttk.Radiobutton(r, text=t, value=v, variable=self.v_kadraj,
+                            command=self._reset_maps).pack(side="left", padx=(6, 0))
 
         # kesme
         c = box("Kesme  (duzeltmeden SONRA, % olarak)")
@@ -574,7 +645,8 @@ class Panel(_TkTaban):
         ttk.Label(r, text="ms").pack(side="left")
         ttk.Spinbox(r, from_=0, to=2000, increment=50, textvariable=self.v_gap,
                     width=6).pack(side="left", padx=2)
-        ttk.Checkbutton(c, text="ham kareyi de kaydet", variable=self.v_saveraw).pack(anchor="w")
+        ttk.Label(c, text="her basista: N adet duzeltilmis kare + tek ozet gorsel + tek json",
+                  foreground="#555", wraplength=310).pack(anchor="w")
         ttk.Button(c, text="KARE AL", command=self._shoot).pack(fill="x", pady=3)
         ttk.Button(c, text="cikti klasorunu sec", command=self._pick_out).pack(fill="x")
         self.lbl_out = ttk.Label(c, text=str(self.out), wraplength=310, foreground="#555")
@@ -632,6 +704,8 @@ class Panel(_TkTaban):
     def _reset_theta(self):
         self.theta = None
         self.net = None
+        self.rapor = None
+        self.sistem_ozet = ""
         self._reset_maps()
 
     def _reset_maps(self):
@@ -673,6 +747,26 @@ class Panel(_TkTaban):
                     self.status.set(f"profil okunamadi: {e}")
                     self.v_mode.set("kapali")
             return self.theta
+        if mode == "sistem":
+            if self.theta is None:
+                try:
+                    self.status.set("distorch tam sistem calisiyor (bilezik dahil)...")
+                    self.update_idletasks()
+                    r = distorch_sistem(frame, use_rings=True)
+                    self.theta, self.rapor = r["theta"], r
+                    s2 = r.get("stage2") or {}
+                    self.sistem_ozet = (
+                        f"   distorch {r.get('verdict')}"
+                        f"  bilezik {s2.get('n_rings', 0)}"
+                        f"{'+' if s2.get('used') else '-'}"
+                        f"  kose {r.get('quality', {}).get('corner_px')} px")
+                    self.status.set(self.sistem_ozet.strip())
+                except Exception as e:
+                    self.sistem_ozet = ""
+                    self.status.set(f"distorch calismadi: {type(e).__name__}: {e}")
+                    self.v_mode.set("kapali")
+                    return None
+            return self.theta
         if self.net is None and self.v_wts.get():
             try:
                 self.status.set("model yukleniyor...")
@@ -696,13 +790,16 @@ class Panel(_TkTaban):
         h, w = frame.shape[:2]
         t = th if (w, h) == (1920, 1080) else scale_theta(th, w / 1920.0)
         roll = _sayi(self.v_rolltxt, 0.0, float) if self.v_level.get() else 0.0
+        sigdir = self.v_kadraj.get() == "sigdir"
         key = (round(t["k1"], 6), round(t["k2"], 6), round(t["cx"], 2),
-               round(t["cy"], 2), w, h, round(roll, 4))
+               round(t["cy"], 2), w, h, round(roll, 4), sigdir)
         if self.maps is None or self.maps_key != key:
             # 1920x1080'de 1-2 sn suruyor; donma sanilmasin diye haber ver
             self.status.set("haritalar hazirlaniyor...")
             self.update_idletasks()
-            self.maps = build_maps(t, (w, h), roll)
+            fit = fit_scale(t, (w, h)) if sigdir else None
+            self.fit_k = fit[0] if fit else None
+            self.maps = build_maps(t, (w, h), roll, fit)
             self.maps_key = key
         return cv2.remap(frame, self.maps[0], self.maps[1], cv2.INTER_LINEAR), th
 
@@ -791,6 +888,9 @@ class Panel(_TkTaban):
                          f"{img.shape[1]}x{img.shape[0]}")
                     if th:
                         s += f"   k1 {th['k1']:+.4f} k2 {th['k2']:+.4f} cx {th['cx']:.0f} cy {th['cy']:.0f}"
+                        s += (f"   kadraj sigdir k={self.fit_k:.3f}" if self.fit_k
+                              else "   kadraj tam (kenar kesiliyor)")
+                        s += self.sistem_ozet
                     if det:
                         s += f"   {len(det)} tespit"
                     self.status.set(s)
@@ -821,32 +921,44 @@ class Panel(_TkTaban):
             messagebox.showerror("kayit", f"{type(e).__name__}: {e}\n\nklasor: {self.out}")
 
     def _shoot_gercek(self):
+        """N kare: her biri icin SADECE duzeltilmis PNG, hepsi icin tek ozet
+        gorsel (distorch + YOLO cizimli, alt alta) ve tek kayit.json."""
         self.shot += 1
         tag = self.v_tag.get().strip() or "test"
         stamp = time.strftime("%Y%m%d_%H%M%S")
         d = self.out / f"{tag}_{stamp}"
         d.mkdir(parents=True, exist_ok=True)
+
         meta = {"etiket": tag, "zaman": stamp, "mod": self.v_mode.get(),
+                "kadraj": self.v_kadraj.get(),
+                "kadraj_olcek": None if self.fit_k is None else round(self.fit_k, 4),
+                "sapma_duzeltmesi": bool(self.v_bias.get()),
                 "kesme": {k: round(v.get(), 2) for k, v in self.v_cut.items()},
                 "kamera": {"aygit": self.v_dev.get(), "format": self.v_fourcc.get(),
                            "cozunurluk": list(self.cam.real)},
                 "kareler": []}
+        if self.v_mode.get() == "sistem" and self.rapor:
+            r = self.rapor
+            meta["distorch"] = {"verdict": r.get("verdict"),
+                                "bilezik": (r.get("stage2") or {}).get("n_rings"),
+                                "bilezik_kullanildi": (r.get("stage2") or {}).get("used"),
+                                "kalite": r.get("quality"),
+                                "mm_per_px_panel": r.get("mm_per_px_panel")}
+
         gap = _sayi(self.v_gap, 150)
-        for i in range(_sayi(self.v_n, 3)):
+        ozet = []
+        for i in range(max(1, _sayi(self.v_n, 3))):
             f = self.cam.grab()
             if f is None:
                 continue
             cor, th = self.correct(f)
             img = self.cut(cor)
-            vis, det = self.detect(img)
-            if self.v_saveraw.get():
-                cv2.imwrite(str(d / f"{i+1:02d}_ham.png"), f)
-            cv2.imwrite(str(d / f"{i+1:02d}_duzeltilmis.png"), img)
-            if det:
-                cv2.imwrite(str(d / f"{i+1:02d}_tespit.jpg"), vis,
-                            [cv2.IMWRITE_JPEG_QUALITY, 92])
+            vis, det = self.detect(img)                 # olcum karesi: throttle yok
+            cv2.imwrite(str(d / f"{i+1:02d}_distorch.png"), img)
+            ozet.append(vis if det else img)
             meta["kareler"].append({
                 "no": i + 1,
+                "dosya": f"{i+1:02d}_distorch.png",
                 "theta": None if th is None else {k: round(th[k], 6)
                                                   for k in ("k1", "k2", "cx", "cy")},
                 "tespit": [{k: (round(v, 4) if isinstance(v, float) else v)
@@ -856,8 +968,22 @@ class Panel(_TkTaban):
             if gap:
                 self.update()
                 time.sleep(gap / 1000.0)
+
+        if ozet:
+            w = min(x.shape[1] for x in ozet)
+            satir = [x if x.shape[1] == w else
+                     cv2.resize(x, (w, int(x.shape[0] * w / x.shape[1])),
+                                interpolation=cv2.INTER_AREA) for x in ozet]
+            kare = np.vstack(satir)
+            if kare.shape[1] > 1280:                    # ozet gorsel, tam cozunurluk gerekmez
+                k = 1280.0 / kare.shape[1]
+                kare = cv2.resize(kare, (1280, int(kare.shape[0] * k)),
+                                  interpolation=cv2.INTER_AREA)
+            cv2.imwrite(str(d / "ozet_yolo.jpg"), kare, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            meta["ozet"] = "ozet_yolo.jpg"
+
         (d / "kayit.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
-        self.status.set(f"{len(meta['kareler'])} kare -> {d}")
+        self.status.set(f"{len(meta['kareler'])} kare + ozet -> {d}")
 
     def _quit(self):
         if self.cam:

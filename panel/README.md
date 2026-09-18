@@ -88,14 +88,41 @@ yazar. `tara` düğmesi `/dev/video*`'u yeniden listeler.
 > şişeyi bulur — çıktısı kutu/maske. Panel dosyayı seçerken hangisi olduğunu
 > arşivin içinden anlıyor; yanlış yuvaya koyarsan açık bir uyarıyla reddediyor.
 
-**1) Distorsiyon düzeltme** — üç mod:
+**1) Distorsiyon düzeltme** — dört mod:
 
 - `kapalı` — ham kare
 - `profil JSON` — distorch'un yazdığı profil (`camera_matrix` + `dist_coeffs`),
   veya düz `{"k1":..,"k2":..,"cx":..,"cy":..}`. İçinde `roll_deg` varsa okunur.
-- `distorch modeli (.pt)` — **istediğin ağırlık**: distort_v2, v3, ne olursa. Yanındaki
-  `*_meta.json` otomatik aranır (normalizasyon + çapalar oradan gelir),
-  `*_bias.json` varsa sapma düzeltmesi uygulanır.
+- **`1) sadece CNN (.pt ağırlığı)`** — **istediğin ağırlık**: distort_v2, v3, ne olursa.
+  Yanındaki `*_meta.json` otomatik aranır (normalizasyon + çapalar oradan gelir),
+  `*_bias.json` varsa sapma düzeltmesi uygulanır. Hızlı (~0.2 sn) ama CNN
+  karar vermez, sadece bir başlangıç değeri verir.
+- **`2) bilezik + CNN (distorch tam sistem)`** — `distorch.calibrate`'i çalıştırır:
+  CNN başlangıç değeri verir, sonra delikler + kenarlar çözülür (aşama 1) ve
+  bilezikler ölçülür (aşama 2). Çıktı **geometrik çözümdür**. ~1.5 sn sürer.
+
+Aradaki fark ölçülebilir — `ACO_ANKA_0045` karesinde:
+
+| mod | köşe hatası |
+|---|---|
+| sadece CNN | — (başlangıç değeri, kapı yok) |
+| tam sistem, bilezik kapalı | 3.08 px |
+| **tam sistem, bilezik açık** | **0.92 px** |
+
+Tam sistem `reject` verirse panel o θ'yı **kullanmaz**: boş/bozuk karede çözücü
+sınıra dayanıp k1=3.0 gibi bir değer döndürebiliyor, o durumda mod kapanır ve
+durum çubuğu sebebini yazar.
+
+**Kadraj** — `kesme yok` (varsayılan) / `tam`:
+
+- `kesme yok` — düzeltilmiş kadrajın **tamamı** 1920×1080 tuvalin içine sığdırılır.
+  Hiçbir şey kesilmez, kenarlarda siyah yaylar kalır. Ölçek çıkış odağıyla
+  ayarlanıyor (`f` bir ölçüm değil, distorch'un kendi deyişiyle bir seçim).
+- `tam` — tuval dolar ama **ham karenin dış %32'si dışarıda kalır**. Eski davranış.
+
+Durum çubuğu hangisinde olduğunu ve ölçeği yazar (`kadraj sigdir k=0.794`).
+**`mm/px`'i hangi kadrajda ölçtüysen o kadrajda kullan** — ölçek değişince
+piksel başına mm de değişir.
 
 θ ilk karede bir kez çözülür, sonra sabit kalır — boş hazneyi bir kez kalibre
 edip sonra şişeyle test edebilmen için. Modeli/profili değiştirince sıfırlanır.
@@ -126,13 +153,18 @@ bir koşu 1–2 saniye sürüyor, her karede çalıştırılsa arayüz hiç nefe
 `KARE AL` her basışta ayrı bir klasör açar:
 
 ```
-cikti/test_20260917_141203/
-  01_ham.png            # kameradan geldiği gibi
-  01_duzeltilmis.png    # düzeltme + kesme sonrası
-  01_tespit.jpg         # YOLO çizimli (tespit varsa)
-  02_... 03_...
-  kayit.json            # theta, kesme ayarları, kamera, her tespitin en/boy ve mm ölçüsü
+cikti/test_20260918_141203/
+  01_distorch.png       # düzeltilmiş kare (ham kare kaydedilmiyor)
+  02_distorch.png
+  03_distorch.png
+  ozet_yolo.jpg         # 3'ü tek karede, alt alta, distorch + YOLO çizimli
+  kayit.json            # 3 kareye ait tek json
 ```
+
+`kayit.json` içinde: mod, kadraj ve ölçeği, sapma düzeltmesi açık mıydı, kesme
+ayarları, kamera, her karenin θ'sı ve tespitlerin en/boy + mm ölçüsü. Tam sistem
+modundaysa ayrıca `distorch` bölümü: verdict, bulunan bilezik sayısı, köşe
+hatası, `mm_per_px_panel`.
 
 `kayit.json` ayarları da içerdiği için hangi kareyi hangi ayarla aldığını
 sonradan karıştırmazsın. Varsayılan çıktı klasörü `panel.py`'nin yanındaki
