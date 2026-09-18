@@ -144,9 +144,34 @@ Aradaki fark ölçülebilir — `ACO_ANKA_0045` karesinde:
 | tam sistem, bilezik kapalı | 3.08 px |
 | **tam sistem, bilezik açık** | **0.92 px** |
 
-Tam sistem `reject` verirse panel o θ'yı **kullanmaz**: boş/bozuk karede çözücü
-sınıra dayanıp k1=3.0 gibi bir değer döndürebiliyor, o durumda mod kapanır ve
-durum çubuğu sebebini yazar.
+### Kalibrasyon nasıl yapılıyor
+
+Bilezik tespiti gürültüye çok duyarlı — aynı hareketsiz sahnede bulunan sayı
+kareden kareye 1-2-3-5 diye zıplayabiliyor. Ölçtüm: gürültülü **tek** karede
+12 karenin sadece 1'inde bilezik kullanılabiliyor, **5 kare ortalanınca 9'unda**.
+
+Bu yüzden θ tek karede çözülmüyor:
+
+```
+5 kareyi ortala  ->  calibrate  ->  bilezik >= 3 ve kullanildi mi?
+   evet -> tamam
+   hayir -> yeni 5 kare ile tekrar (en fazla 3 deneme)
+   hic olmazsa -> THETA KABUL EDILMEZ, mod kapanir, sebep yazilir
+```
+
+Toplam ~3-5 saniye. Durum çubuğu kaç kare ortalandığını ve kaçıncı denemede
+tuttuğunu yazar: `bilezik 3+ kose 1.14 px (5 kare ort., 2. deneme)`.
+
+**Bilezik şartı neden var:** bilezikler fitin ölçümle desteklendiği yarıçapı
+`r=0.335`'ten `r=0.414`'e taşıyor. Şişe uçları `r=0.42–0.51`'e ulaşıyor, yani
+bileziksiz kalibrasyonda tam o bölge `r⁴` ekstrapolasyonuyla uyduruluyor.
+
+Bilezik hiç çıkmazsa: hazneyi boşalt, aydınlatmayı kontrol et. Geçici çözüm
+olarak `1) sadece CNN` modu her zaman açık.
+
+Tam sistem `reject` verirse panel o θ'yı da **kullanmaz**: boş/bozuk karede
+çözücü sınıra dayanıp k1=3.0 gibi bir değer döndürebiliyor, o durumda mod
+kapanır ve durum çubuğu sebebini yazar.
 
 **Çıkış ölçeği her zaman 1.0.** Cisim kaç pikselse o kalır. Bir ara "tüm kadrajı
 küçültüp tuvale sığdır" seçeneği vardı, kaldırıldı: ölçüm çözünürlüğünü %24

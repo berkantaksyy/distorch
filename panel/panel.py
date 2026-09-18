@@ -70,6 +70,13 @@ except Exception as _e:                      # ImportError veya TclError
 CANON_F = 1920.0
 ANCHORS = (0.30, 0.60)
 
+# Kalibrasyon: kac kare ortalanacak, kac kez denenecek, kac bilezik sart.
+# Bilezik tespiti gurultuye cok duyarli - ayni sahnede sayi kareden kareye
+# 1-2-3-5 diye ziplayabiliyor. Ortalama gurultuyu sqrt(N) kadar dusuruyor.
+KALIB_KARE = 5
+KALIB_DENEME = 3
+KALIB_MIN_BILEZIK = 3
+
 # Sahada kullanilan kesme ayari. "kayitli ayar" dugmesi ve
 # "OLCUM AYARLARINI KUR" bunu yukluyor.
 # Yuzdeler DUZELTILMIS kareye gore; duzeltme kadraji degistirdigi icin ham
@@ -245,6 +252,17 @@ class DistortNet:
                 "m1": m1, "m2": m2}
 
 
+def kare_ortala(kareler):
+    """N kareyi ortala. Sahne hareketsizken gurultu sqrt(N) kadar duser;
+    bilezik tespiti esigin sinirinda oldugu icin bu farki goruyor."""
+    if len(kareler) == 1:
+        return kareler[0]
+    a = np.zeros(kareler[0].shape, np.float32)
+    for k in kareler:
+        a += k
+    return np.clip(a / len(kareler), 0, 255).astype(np.uint8)
+
+
 def distorch_sistem(frame, use_rings=True):
     """distorch'un tam sistemi: CNN + delik + kenar + solve (+ bilezik).
 
@@ -327,6 +345,7 @@ class Camera:
         self.real = (0, 0)
         self.measured_fps = 0.0
         self.thread = None
+        self.kare_no = 0            # yeni kare geldi mi anlamak icin
 
     def open(self):
         idx = self.device
@@ -381,6 +400,7 @@ class Camera:
                 continue
             with self.lock:
                 self.frame = f
+                self.kare_no += 1
             n += 1
             if n >= 15:
                 self.measured_fps = n / (time.time() - t0)
@@ -389,6 +409,11 @@ class Camera:
     def grab(self):
         with self.lock:
             return None if self.frame is None else self.frame.copy()
+
+    def grab_no(self):
+        """(kare, sira_no). Ayni kareyi iki kez saymamak icin."""
+        with self.lock:
+            return (None if self.frame is None else self.frame.copy()), self.kare_no
 
     def close(self):
         """Okuma is parcacigi bitmeden release ETME.
@@ -569,6 +594,7 @@ class Panel(_TkTaban):
         self.v_gap = tk.IntVar(value=args.gap_ms)
         self.v_tag = tk.StringVar(value="test")
 
+        self._cozuluyor = False     # theta cozumu surerken tekrar girilmesin
         self.oturum = None          # adimli cekim oturumu (None = oturum yok)
         self.rapor = None           # distorch tam sistem raporu (sistem modu)
         self.sistem_ozet = ""       # durum cubugunda kalici kalsin diye
@@ -829,6 +855,52 @@ class Panel(_TkTaban):
             self.status.set(f"DIKKAT: istenen {w}x{h}, alinan {c.real[0]}x{c.real[1]}")
 
     # ---------------------------------------------------------- isleme
+    def _kare_topla(self, n, zaman_asimi=6.0):
+        """n tane FARKLI kare topla. cam.grab() hep son kareyi verdigi icin
+        ayni kareyi n kez almamak adina sira numarasina bakiyoruz."""
+        if not self.cam:
+            return []
+        kareler, son, t0 = [], -1, time.time()
+        while len(kareler) < n and time.time() - t0 < zaman_asimi:
+            f, no = self.cam.grab_no()
+            if f is not None and no != son:
+                kareler.append(f)
+                son = no
+            else:
+                # update() DEGIL: o _tick'i tetikler, _tick de _get_theta'ya
+                # girip buraya geri doner (ozyineleme). idletasks sadece cizim.
+                self.update_idletasks()
+                time.sleep(0.005)
+        return kareler
+
+    def _sistem_coz(self, ilk_kare):
+        """theta'yi ortalanmis karede coz, bilezik cikmazsa tekrar dene.
+
+        Bilezik sayisi ayni sahnede kareden kareye ziplayabiliyor; tek karede
+        cozmek kumar. Ortalama gurultuyu bastiriyor, tekrar da kalan sansi
+        topluyor. KALIB_MIN_BILEZIK saglanmazsa theta KABUL EDILMIYOR - bilezik
+        fitin olcumle desteklendigi yaricapi genisletiyor, onsuz sise uclari
+        ekstrapolasyon bolgesinde olculuyor.
+        """
+        son = None
+        for i in range(KALIB_DENEME):
+            kareler = self._kare_topla(KALIB_KARE) or [ilk_kare]
+            self.status.set(f"distorch calisiyor: {len(kareler)} kare ortalandi "
+                            f"(deneme {i+1}/{KALIB_DENEME})...")
+            self.update_idletasks()
+            r = distorch_sistem(kare_ortala(kareler), use_rings=True)
+            r["_kare"] = len(kareler)
+            r["_deneme"] = i + 1
+            son = r
+            s2 = r.get("stage2") or {}
+            if s2.get("used") and (s2.get("n_rings") or 0) >= KALIB_MIN_BILEZIK:
+                return r
+        n = (son.get("stage2") or {}).get("n_rings", 0) if son else 0
+        raise RuntimeError(
+            f"bilezik yetersiz: {n} bulundu, {KALIB_MIN_BILEZIK} gerekiyor "
+            f"({KALIB_DENEME} deneme x {KALIB_KARE} kare). Hazneyi bosalt, "
+            f"aydinlatmayi kontrol et; gecici cozum icin '1) sadece CNN'")
+
     def _get_theta(self, frame):
         mode = self.v_mode.get()
         if mode == "kapali":
@@ -844,23 +916,27 @@ class Panel(_TkTaban):
             return self.theta
         if mode == "sistem":
             if self.theta is None:
+                if self._cozuluyor:          # zaten cozuluyor, ust ustu binmesin
+                    return None
                 try:
-                    self.status.set("distorch tam sistem calisiyor (bilezik dahil)...")
-                    self.update_idletasks()
-                    r = distorch_sistem(frame, use_rings=True)
+                    self._cozuluyor = True
+                    r = self._sistem_coz(frame)
                     self.theta, self.rapor = r["theta"], r
                     s2 = r.get("stage2") or {}
                     self.sistem_ozet = (
                         f"   distorch {r.get('verdict')}"
                         f"  bilezik {s2.get('n_rings', 0)}"
                         f"{'+' if s2.get('used') else '-'}"
-                        f"  kose {r.get('quality', {}).get('corner_px')} px")
+                        f"  kose {r.get('quality', {}).get('corner_px')} px"
+                        f"  ({r.get('_kare')} kare ort., {r.get('_deneme')}. deneme)")
                     self.status.set(self.sistem_ozet.strip())
                 except Exception as e:
                     self.sistem_ozet = ""
-                    self.status.set(f"distorch calismadi: {type(e).__name__}: {e}")
+                    self.status.set(f"distorch calismadi: {e}")
                     self.v_mode.set("kapali")
                     return None
+                finally:
+                    self._cozuluyor = False
             return self.theta
         if self.net is None and self.v_wts.get():
             try:
@@ -1064,6 +1140,8 @@ class Panel(_TkTaban):
         if self.v_mode.get() == "sistem" and self.rapor:
             r = self.rapor
             meta["distorch"] = {"verdict": r.get("verdict"),
+                                "ortalanan_kare": r.get("_kare"),
+                                "deneme": r.get("_deneme"),
                                 "bilezik": (r.get("stage2") or {}).get("n_rings"),
                                 "bilezik_kullanildi": (r.get("stage2") or {}).get("used"),
                                 "kalite": r.get("quality"),
