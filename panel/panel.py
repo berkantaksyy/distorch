@@ -70,6 +70,9 @@ except Exception as _e:                      # ImportError veya TclError
 CANON_F = 1920.0
 ANCHORS = (0.30, 0.60)
 
+# Sahada kullanilan kesme ayari. "kayitli ayar" dugmesi bunu yukluyor.
+KESME_KAYITLI = {"ust": 28.0, "alt": 16.0, "sol": 10.0, "sag": 5.0}
+
 
 # --------------------------------------------------------------- geometri
 
@@ -521,6 +524,7 @@ class Panel(_TkTaban):
         self.v_gap = tk.IntVar(value=args.gap_ms)
         self.v_tag = tk.StringVar(value="test")
 
+        self.oturum = None          # adimli cekim oturumu (None = oturum yok)
         self.rapor = None           # distorch tam sistem raporu (sistem modu)
         self.sistem_ozet = ""       # durum cubugunda kalici kalsin diye
         self.fit_k = None           # kadraj olcegi; None = kesme var (tam)
@@ -577,7 +581,7 @@ class Panel(_TkTaban):
         for t, v in (("kapali (ham)", "kapali"),
                      ("profil JSON", "profil"),
                      ("1) sadece CNN   (.pt agirligi)", "model"),
-                     ("2) bilezik + CNN   (distorch tam sistem)", "sistem")):
+                     ("2) CNN + delik + kenar + bilezik   (tam sistem)", "sistem")):
             ttk.Radiobutton(c, text=t, value=v, variable=self.v_mode,
                             command=self._reset_theta).pack(anchor="w")
         r = ttk.Frame(c); r.pack(fill="x", pady=2)
@@ -604,6 +608,7 @@ class Panel(_TkTaban):
 
         # kesme
         c = box("Kesme  (duzeltmeden SONRA, % olarak)")
+        self.cut_lbl = {}
         for k in ("ust", "alt", "sol", "sag"):
             r = ttk.Frame(c); r.pack(fill="x")
             ttk.Label(r, text=k, width=5).pack(side="left")
@@ -612,7 +617,11 @@ class Panel(_TkTaban):
                       command=lambda v, l=lab: l.configure(text=f"{float(v):.0f}")
                       ).pack(side="left", fill="x", expand=True)
             lab.pack(side="left")
-        ttk.Button(c, text="sifirla", command=self._cut_reset).pack(anchor="e")
+            self.cut_lbl[k] = lab
+        r = ttk.Frame(c); r.pack(fill="x", pady=(2, 0))
+        ttk.Button(r, text="kayitli ayar  ({ust:.0f}/{alt:.0f}/{sol:.0f}/{sag:.0f})".format(
+            **KESME_KAYITLI), command=self._cut_kayitli).pack(side="left", fill="x", expand=True)
+        ttk.Button(r, text="sifirla", command=self._cut_reset).pack(side="left", padx=(4, 0))
 
         # yolo
         c = box("2) NESNE TESPITI   (YOLO agirligi - ayri model)")
@@ -641,16 +650,20 @@ class Panel(_TkTaban):
         ttk.Label(r, text="etiket").pack(side="left")
         ttk.Entry(r, textvariable=self.v_tag, width=12).pack(side="left", padx=4)
         ttk.Label(r, text="adet").pack(side="left")
-        ttk.Spinbox(r, from_=1, to=20, textvariable=self.v_n, width=4).pack(side="left", padx=2)
-        ttk.Label(r, text="ms").pack(side="left")
-        ttk.Spinbox(r, from_=0, to=2000, increment=50, textvariable=self.v_gap,
-                    width=6).pack(side="left", padx=2)
-        ttk.Label(c, text="her basista: N adet duzeltilmis kare + tek ozet gorsel + tek json",
-                  foreground="#555", wraplength=310).pack(anchor="w")
-        ttk.Button(c, text="KARE AL", command=self._shoot).pack(fill="x", pady=3)
-        ttk.Button(c, text="cikti klasorunu sec", command=self._pick_out).pack(fill="x")
+        ttk.Spinbox(r, from_=1, to=20, textvariable=self.v_n, width=4,
+                    command=self._adim_yaz).pack(side="left", padx=2)
+        self.lbl_adim = tk.Label(c, text="", font=("", 12, "bold"), fg="#0a0",
+                                 wraplength=300, justify="left")
+        self.lbl_adim.pack(anchor="w", pady=(4, 2))
+        self.btn_shot = ttk.Button(c, text="KARE AL", command=self._shoot)
+        self.btn_shot.pack(fill="x", pady=3)
+        self.btn_iptal = ttk.Button(c, text="oturumu iptal et", command=self._oturum_iptal,
+                                    state="disabled")
+        self.btn_iptal.pack(fill="x")
+        ttk.Button(c, text="cikti klasorunu sec", command=self._pick_out).pack(fill="x", pady=(3, 0))
         self.lbl_out = ttk.Label(c, text=str(self.out), wraplength=310, foreground="#555")
         self.lbl_out.pack(anchor="w")
+        self._adim_yaz()                     # dugme yazisini "KARE AL (1/N)" yap
 
     def _out_hazirla(self, p):
         """Cikti klasoru yazilamiyorsa panel acilmadan cokmesin, /tmp'ye dus."""
@@ -666,9 +679,22 @@ class Panel(_TkTaban):
                 continue
         return p
 
+    def _cut_yukle(self, ayar):
+        """Kaydiricilari ve yanlarindaki sayilari birlikte set et.
+
+        ttk.Scale'in command'i degiskeni ELLE set edince her Tk surumunde
+        tetiklenmiyor; sayi eski degerde kalmasin diye etiketi de yaziyoruz.
+        """
+        for k, v in self.v_cut.items():
+            v.set(float(ayar.get(k, 0.0)))
+            if k in getattr(self, "cut_lbl", {}):
+                self.cut_lbl[k].configure(text=f"{float(ayar.get(k, 0.0)):.0f}")
+
     def _cut_reset(self):
-        for v in self.v_cut.values():
-            v.set(0.0)
+        self._cut_yukle({})
+
+    def _cut_kayitli(self):
+        self._cut_yukle(KESME_KAYITLI)
 
     def _pick(self, var, types, reset_yolo=False, want=None):
         agirlik = BURASI.parent / "weights"
@@ -910,25 +936,52 @@ class Panel(_TkTaban):
         self.canvas.image = im
 
     # ---------------------------------------------------------- cekim
+    # ---------------------------------------------------------- cekim
+    # Adimli akis: her basista TEK kare, aralarda "siseyi ilerletin".
+    #   bas -> 1. kare        -> "SISEYI ILERLETIN"
+    #   bas -> 2. kare        -> "SISEYI ILERLETIN"
+    #   bas -> 3. kare        -> "kaydetmek icin bas"
+    #   bas -> ozet + json yazilir, oturum kapanir
+    def _adim_yaz(self, mesaj=None, renk="#0a0"):
+        n = max(1, _sayi(self.v_n, 3))
+        if self.oturum is None:
+            self.btn_shot.configure(text=f"KARE AL   (1/{n})")
+            self.btn_iptal.configure(state="disabled")
+            self.lbl_adim.configure(text=mesaj or "", fg=renk)
+            return
+        i, n = self.oturum["sayac"], self.oturum["n"]
+        self.btn_iptal.configure(state="normal")
+        if i < n:
+            self.btn_shot.configure(text=f"KARE AL   ({i+1}/{n})")
+            self.lbl_adim.configure(
+                text=mesaj or f"{i}/{n} alindi\nSISEYI ILERLETIN, sonra tekrar bas",
+                fg=renk)
+        else:
+            self.btn_shot.configure(text="BITIR VE KAYDET")
+            self.lbl_adim.configure(text=mesaj or f"{n}/{n} alindi\nkaydetmek icin bas",
+                                    fg="#c60")
+
     def _shoot(self):
         if not self.cam:
             messagebox.showwarning("kamera", "once kamerayi ac")
             return
         try:
-            self._shoot_gercek()
-        except Exception as e:                # disk dolu, izin yok, model patladi
+            if self.oturum is None:
+                self._oturum_ac()
+            if self.oturum["sayac"] < self.oturum["n"]:
+                self._kare_al()
+            else:
+                self._oturum_kapat()
+        except Exception as e:
             self.status.set(f"kayit basarisiz: {type(e).__name__}: {e}")
             messagebox.showerror("kayit", f"{type(e).__name__}: {e}\n\nklasor: {self.out}")
 
-    def _shoot_gercek(self):
-        """N kare: her biri icin SADECE duzeltilmis PNG, hepsi icin tek ozet
-        gorsel (distorch + YOLO cizimli, alt alta) ve tek kayit.json."""
+    def _oturum_ac(self):
         self.shot += 1
         tag = self.v_tag.get().strip() or "test"
         stamp = time.strftime("%Y%m%d_%H%M%S")
         d = self.out / f"{tag}_{stamp}"
         d.mkdir(parents=True, exist_ok=True)
-
         meta = {"etiket": tag, "zaman": stamp, "mod": self.v_mode.get(),
                 "kadraj": self.v_kadraj.get(),
                 "kadraj_olcek": None if self.fit_k is None else round(self.fit_k, 4),
@@ -944,31 +997,37 @@ class Panel(_TkTaban):
                                 "bilezik_kullanildi": (r.get("stage2") or {}).get("used"),
                                 "kalite": r.get("quality"),
                                 "mm_per_px_panel": r.get("mm_per_px_panel")}
+        self.oturum = {"dir": d, "meta": meta, "ozet": [],
+                       "sayac": 0, "n": max(1, _sayi(self.v_n, 3))}
 
-        gap = _sayi(self.v_gap, 150)
-        ozet = []
-        for i in range(max(1, _sayi(self.v_n, 3))):
-            f = self.cam.grab()
-            if f is None:
-                continue
-            cor, th = self.correct(f)
-            img = self.cut(cor)
-            vis, det = self.detect(img)                 # olcum karesi: throttle yok
-            cv2.imwrite(str(d / f"{i+1:02d}_distorch.png"), img)
-            ozet.append(vis if det else img)
-            meta["kareler"].append({
-                "no": i + 1,
-                "dosya": f"{i+1:02d}_distorch.png",
-                "theta": None if th is None else {k: round(th[k], 6)
-                                                  for k in ("k1", "k2", "cx", "cy")},
-                "tespit": [{k: (round(v, 4) if isinstance(v, float) else v)
-                            for k, v in x.items()
-                            if k in ("name", "conf", "en_boy", "uzun_mm", "kisa_mm")}
-                           for x in det]})
-            if gap:
-                self.update()
-                time.sleep(gap / 1000.0)
+    def _kare_al(self):
+        o = self.oturum
+        f = self.cam.grab()
+        if f is None:
+            self.status.set("kare alinamadi, tekrar bas")
+            return
+        cor, th = self.correct(f)
+        img = self.cut(cor)
+        vis, det = self.detect(img)                     # olcum karesi: throttle yok
+        i = o["sayac"] + 1
+        cv2.imwrite(str(o["dir"] / f"{i:02d}_distorch.png"), img)
+        o["ozet"].append(vis if det else img)
+        o["meta"]["kareler"].append({
+            "no": i,
+            "dosya": f"{i:02d}_distorch.png",
+            "theta": None if th is None else {k: round(th[k], 6)
+                                              for k in ("k1", "k2", "cx", "cy")},
+            "tespit": [{k: (round(v, 4) if isinstance(v, float) else v)
+                        for k, v in x.items()
+                        if k in ("name", "conf", "en_boy", "uzun_mm", "kisa_mm")}
+                       for x in det]})
+        o["sayac"] = i
+        self.status.set(f"{i}/{o['n']} kare -> {o['dir'].name}")
+        self._adim_yaz()
 
+    def _oturum_kapat(self):
+        o, self.oturum = self.oturum, None
+        d, meta, ozet = o["dir"], o["meta"], o["ozet"]
         if ozet:
             w = min(x.shape[1] for x in ozet)
             satir = [x if x.shape[1] == w else
@@ -981,9 +1040,17 @@ class Panel(_TkTaban):
                                   interpolation=cv2.INTER_AREA)
             cv2.imwrite(str(d / "ozet_yolo.jpg"), kare, [cv2.IMWRITE_JPEG_QUALITY, 90])
             meta["ozet"] = "ozet_yolo.jpg"
-
         (d / "kayit.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
         self.status.set(f"{len(meta['kareler'])} kare + ozet -> {d}")
+        self._adim_yaz(f"kaydedildi: {d.name}", renk="#07a")
+
+    def _oturum_iptal(self):
+        """Oturumu birak. Yazilmis kareler SILINMEZ, klasorde durur."""
+        if self.oturum is None:
+            return
+        o, self.oturum = self.oturum, None
+        self.status.set(f"iptal edildi - {o['sayac']} kare {o['dir']} icinde kaldi")
+        self._adim_yaz("iptal edildi", renk="#a00")
 
     def _quit(self):
         if self.cam:

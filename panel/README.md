@@ -97,7 +97,7 @@ yazar. `tara` düğmesi `/dev/video*`'u yeniden listeler.
   Yanındaki `*_meta.json` otomatik aranır (normalizasyon + çapalar oradan gelir),
   `*_bias.json` varsa sapma düzeltmesi uygulanır. Hızlı (~0.2 sn) ama CNN
   karar vermez, sadece bir başlangıç değeri verir.
-- **`2) bilezik + CNN (distorch tam sistem)`** — `distorch.calibrate`'i çalıştırır:
+- **`2) CNN + delik + kenar + bilezik (tam sistem)`** — `distorch.calibrate`'i çalıştırır:
   CNN başlangıç değeri verir, sonra delikler + kenarlar çözülür (aşama 1) ve
   bilezikler ölçülür (aşama 2). Çıktı **geometrik çözümdür**. ~1.5 sn sürer.
 
@@ -149,8 +149,25 @@ bekleyip** tekrar çalışır; aradaki karelerde son tespit yeniden çizilir. CP
 bir koşu 1–2 saniye sürüyor, her karede çalıştırılsa arayüz hiç nefes alamazdı.
 `KARE AL`'da böyle bir bekleme yok: kaydedilen her kare kendi tespitiyle kaydedilir.
 
-**Kayıt** — etiket, adet (varsayılan **3**), kareler arası ms.
-`KARE AL` her basışta ayrı bir klasör açar:
+**Kesme** için `kayitli ayar` düğmesi sahada kullanılan değerleri yükler:
+üst 28 / alt 16 / sol 10 / sağ 5. `sifirla` hepsini 0 yapar.
+
+**Kayıt — adımlı çekim.** `KARE AL` her basışta **tek kare** alır, aralarda
+şişeyi ilerletmeni bekler:
+
+```
+bas  ->  1. kare alinir   ->  "1/3 alindi — SISEYI ILERLETIN, sonra tekrar bas"
+bas  ->  2. kare alinir   ->  "2/3 alindi — SISEYI ILERLETIN, sonra tekrar bas"
+bas  ->  3. kare alinir   ->  "3/3 alindi — kaydetmek icin bas"
+bas  ->  ozet gorsel + json yazilir, oturum kapanir
+```
+
+Düğmenin üzerinde kaçıncı karede olduğun yazar (`KARE AL (2/3)`). `adet`
+kutusunu değiştirirsen akış ona göre uzar. `oturumu iptal et` yarıda bırakır —
+**o ana kadar çekilen kareler silinmez**, klasörde kalır, sadece özet ve json
+yazılmaz.
+
+Her oturum ayrı bir klasör açar:
 
 ```
 cikti/test_20260918_141203/
