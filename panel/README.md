@@ -179,9 +179,42 @@ cikti/test_20260918_141203/
 ```
 
 `kayit.json` içinde: mod, kadraj ve ölçeği, sapma düzeltmesi açık mıydı, kesme
-ayarları, kamera, her karenin θ'sı ve tespitlerin en/boy + mm ölçüsü. Tam sistem
+ayarları, kamera, kullanılan YOLO ağırlığı/ayarları ve her karenin θ'sı. Tam sistem
 modundaysa ayrıca `distorch` bölümü: verdict, bulunan bilezik sayısı, köşe
 hatası, `mm_per_px_panel`.
+
+### Tespit ölçüleri
+
+Her tespit için aşağıdakiler **maskeden** hesaplanıp JSON'a yazılır. Maske ikili
+alınır, **en büyük bağlı bileşen** seçilir (kopuk parlama lekeleri ölçüye
+girmesin), konturu `RETR_EXTERNAL` + `CHAIN_APPROX_NONE` ile çıkarılır.
+
+| alan | ne |
+|---|---|
+| `bbox` | `[x1,y1,x2,y2]` eksen hizalı kutu |
+| `merkez_px` | `minAreaRect` merkezi |
+| `uzun_px` / `kisa_px` | döndürülmüş kutunun uzun / kısa kenarı |
+| `en_boy` | `kisa/uzun` |
+| `aci_deg` | uzun kenarın açısı, −90..90 |
+| `alan_px` | `contourArea` |
+| `cevre_px` | `arcLength` |
+| `solidity` | `alan / convexHull alanı` — girinti/çıkıntı ölçüsü, 1'e yakın = dışbükey |
+| `circularity` | `4πA/P²` |
+| `kenara_degiyor` | kontur görüntü sınırına ≤2 px ise `true` — **kenardaki tespitin ölçüsü eksiktir** |
+| `mm_per_px` | girdiğin değer, girmediysen `null` |
+| `uzun_mm` / `kisa_mm` / `alan_mm2` | mm karşılıkları, `mm_per_px` yoksa `null` |
+
+Maskesiz (sadece kutu veren) bir modelde bu alanların **hepsi `null`** olur —
+tahmin yazılmaz.
+
+**`retina_masks` açık olmalı.** Kapalıyken maske düşük çözünürlükte hesaplanıyor
+ve ölçüler kayıyor; aynı şişede ölçtüm: `kisa_px` 471 → 454, `alan_px` 399 497 →
+381 006 (~%5 fark). `kayit.json` bu ayarı da yazıyor.
+
+**`circularity` mutlak değer olarak okunmamalı.** `CHAIN_APPROX_NONE` konturu
+piksel basamaklarını takip ettiği için çevre ~%5–8 fazla çıkıyor; tam daire
+1.0 yerine 0.90, 400×200 dikdörtgen 0.70 yerine 0.61 veriyor. Sapma tutarlı
+olduğu için **karşılaştırma** amacıyla güvenilir, ders kitabı değeri olarak değil.
 
 `kayit.json` ayarları da içerdiği için hangi kareyi hangi ayarla aldığını
 sonradan karıştırmazsın. Varsayılan çıktı klasörü `panel.py`'nin yanındaki

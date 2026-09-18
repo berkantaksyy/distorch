@@ -432,6 +432,74 @@ class Camera:
 
 # --------------------------------------------------------------- YOLO
 
+# JSON'a yazilan olcum alanlari. Hepsi MASKEDEN hesaplanir; maske yoksa
+# (kutu-only model) hepsi None kalir - tahmin yazilmaz.
+OLCUM_ALANLARI = ("merkez_px", "uzun_px", "kisa_px", "en_boy", "aci_deg",
+                  "alan_px", "cevre_px", "solidity", "circularity",
+                  "kenara_degiyor", "mm_per_px", "uzun_mm", "kisa_mm", "alan_mm2")
+
+
+def en_buyuk_bilesen(m):
+    """Ikili maskenin en buyuk bagli bileseni. Yoksa None.
+
+    Segmentasyon maskesi bazen kopuk lekeler tasiyor (yansima, parlama); en
+    buyugunu almazsak minAreaRect ikisini birden sarmalayip sahte bir uzunluk
+    uretiyor.
+    """
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(m.astype(np.uint8), 8)
+    if n <= 1:
+        return None
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    return (lab == i).astype(np.uint8)
+
+
+def kontur_olcumleri(c, size, mm_per_px=None):
+    """Konturdan gecen olcumler -> dict. Bolen sifirsa o alan None kalir."""
+    w, h = size
+    (cx, cy), (bw, bh), ang = cv2.minAreaRect(c)
+    uzun, kisa = (bw, bh) if bw >= bh else (bh, bw)
+    if bw < bh:
+        ang += 90.0
+    aci = (ang + 90.0) % 180.0 - 90.0            # uzun kenarin acisi, -90..90
+
+    alan = float(cv2.contourArea(c))
+    cevre = float(cv2.arcLength(c, True))
+    zarf = float(cv2.contourArea(cv2.convexHull(c)))
+
+    xs, ys = c[:, 0, 0], c[:, 0, 1]
+    kenara = bool(((xs <= 2) | (xs >= w - 3) | (ys <= 2) | (ys >= h - 3)).any())
+
+    o = {"merkez_px": [round(float(cx), 2), round(float(cy), 2)],
+         "uzun_px": round(float(uzun), 2),
+         "kisa_px": round(float(kisa), 2),
+         "en_boy": round(float(kisa / uzun), 4) if uzun > 0 else None,
+         "aci_deg": round(float(aci), 2),
+         "alan_px": round(alan, 2),
+         "cevre_px": round(cevre, 2),
+         "solidity": round(alan / zarf, 4) if zarf > 0 else None,
+         "circularity": round(4.0 * np.pi * alan / (cevre ** 2), 4) if cevre > 0 else None,
+         "kenara_degiyor": kenara,
+         "mm_per_px": None, "uzun_mm": None, "kisa_mm": None, "alan_mm2": None}
+    if mm_per_px:
+        o["mm_per_px"] = float(mm_per_px)
+        o["uzun_mm"] = round(float(uzun) * mm_per_px, 2)
+        o["kisa_mm"] = round(float(kisa) * mm_per_px, 2)
+        o["alan_mm2"] = round(alan * mm_per_px ** 2, 2)
+    return o
+
+
+def det_json(d):
+    """Tespit -> kayit.json'a yazilacak alanlar.
+
+    'kontur' (numpy dizisi) ve 'box' (bbox ile ayni bilgi) disarida kalir.
+    Maskesiz modelde olcum alanlarinin hepsi None doner - tahmin yazilmaz.
+    """
+    o = {"name": d.get("name"), "cls": d.get("cls"),
+         "conf": round(float(d["conf"]), 4), "bbox": d.get("bbox")}
+    o.update({k: d.get(k) for k in OLCUM_ALANLARI})
+    return o
+
+
 class Yolo:
     def __init__(self, weights):
         try:
@@ -442,29 +510,32 @@ class Yolo:
         self.name = Path(weights).name
         self.task = getattr(self.m, "task", "?")
 
-    def run(self, img, conf=0.25, retina=True):
+    def run(self, img, conf=0.25, retina=True, mm_per_px=None):
         r = self.m.predict(img, conf=conf, retina_masks=retina, verbose=False)[0]
         out = []
+        ih, iw = img.shape[:2]
         n = 0 if r.boxes is None else len(r.boxes)
         for i in range(n):
             x1, y1, x2, y2 = [float(v) for v in r.boxes.xyxy[i].cpu().numpy()]
-            d = {"box": (x1, y1, x2, y2), "conf": float(r.boxes.conf[i]),
+            d = {"box": (x1, y1, x2, y2),
+                 "bbox": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
+                 "conf": float(r.boxes.conf[i]),
                  "cls": int(r.boxes.cls[i]), "name": r.names.get(int(r.boxes.cls[i]), "?"),
                  "rot": None}
+            d.update({k: None for k in OLCUM_ALANLARI})   # maske yoksa hepsi None kalir
             if r.masks is not None and i < len(r.masks.data):
                 m = (r.masks.data[i].cpu().numpy() > 0.5).astype(np.uint8)
-                if m.shape[:2] != img.shape[:2]:
-                    m = cv2.resize(m, (img.shape[1], img.shape[0]),
-                                   interpolation=cv2.INTER_NEAREST)
-                cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                if cnts:
-                    c = max(cnts, key=cv2.contourArea)
-                    (cx, cy), (w, h), ang = cv2.minAreaRect(c)
-                    lo, sh = (w, h) if w >= h else (h, w)
-                    if w < h:
-                        ang += 90.0
-                    d["rot"] = {"c": (cx, cy), "uzun": lo, "kisa": sh,
-                                "aci": (ang + 90.0) % 180.0 - 90.0, "kontur": c}
+                if m.shape[:2] != (ih, iw):
+                    m = cv2.resize(m, (iw, ih), interpolation=cv2.INTER_NEAREST)
+                m = en_buyuk_bilesen(m)
+                if m is not None:
+                    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                    if cnts:
+                        c = max(cnts, key=cv2.contourArea)
+                        d.update(kontur_olcumleri(c, (iw, ih), mm_per_px))
+                        d["rot"] = {"c": (d["merkez_px"][0], d["merkez_px"][1]),
+                                    "uzun": d["uzun_px"], "kisa": d["kisa_px"],
+                                    "aci": d["aci_deg"], "kontur": c}
             out.append(d)
         return out
 
@@ -865,7 +936,8 @@ class Panel(_TkTaban):
             return self._draw(img, self._det), self._det
         try:
             t0 = time.time()
-            det = self.yolo.run(img, self.v_conf.get(), self.v_retina.get())
+            mm = _sayi(self.v_mmpx, None, float) if self.v_mmpx.get().strip() else None
+            det = self.yolo.run(img, self.v_conf.get(), self.v_retina.get(), mm)
             self._det_next = time.time() + max(0.25, time.time() - t0)
         except Exception as e:
             self.status.set(f"yolo hatasi: {e}")
@@ -875,9 +947,10 @@ class Panel(_TkTaban):
         return self._draw(img, det), det
 
     def _draw(self, img, det):
+        """Sadece cizer. Olcumler Yolo.run icinde hesaplandi, burada
+        hesaplanmiyor: cizim kapaliyken de ayni sayilar JSON'a gitsin diye."""
         if not det:
             return img
-        mm = _sayi(self.v_mmpx, None, float) if self.v_mmpx.get().strip() else None
         vis = img.copy()
         F = cv2.FONT_HERSHEY_SIMPLEX
         for d in det:
@@ -890,12 +963,11 @@ class Panel(_TkTaban):
                 pts = cv2.boxPoints((rt["c"], (rt["uzun"], rt["kisa"]),
                                      rt["aci"])).astype(int)
                 cv2.polylines(vis, [pts], True, (80, 230, 80), 2)
-                d["en_boy"] = rt["kisa"] / max(rt["uzun"], 1e-6)
-                txt += f'  aci {rt["aci"]:+.1f}  en/boy {d["en_boy"]:.3f}'
-                if mm:
-                    d["uzun_mm"] = rt["uzun"] * mm
-                    d["kisa_mm"] = rt["kisa"] * mm
-                    txt += f'  {rt["uzun"]*mm:.0f}x{rt["kisa"]*mm:.0f} mm'
+                txt += f'  aci {d["aci_deg"]:+.1f}  en/boy {d["en_boy"]:.3f}'
+                if d.get("uzun_mm") is not None:
+                    txt += f'  {d["uzun_mm"]:.0f}x{d["kisa_mm"]:.0f} mm'
+                if d.get("kenara_degiyor"):
+                    txt += "  [KENARDA]"
             cv2.putText(vis, txt, (x1, max(16, y1 - 6)), F, 0.55, (80, 230, 80), 2)
         return vis
 
@@ -990,6 +1062,14 @@ class Panel(_TkTaban):
                 "kamera": {"aygit": self.v_dev.get(), "format": self.v_fourcc.get(),
                            "cozunurluk": list(self.cam.real)},
                 "kareler": []}
+        # olcumler hangi agirlikla ve hangi ayarla cikti - dosyadan anlasilsin
+        if self.v_yolo_on.get() and self.v_yolo_w.get():
+            meta["yolo"] = {"agirlik": Path(self.v_yolo_w.get()).name,
+                            "task": getattr(self.yolo, "task", None),
+                            "conf": round(float(self.v_conf.get()), 3),
+                            "retina_masks": bool(self.v_retina.get()),
+                            "mm_per_px": (_sayi(self.v_mmpx, None, float)
+                                          if self.v_mmpx.get().strip() else None)}
         if self.v_mode.get() == "sistem" and self.rapor:
             r = self.rapor
             meta["distorch"] = {"verdict": r.get("verdict"),
@@ -1017,10 +1097,7 @@ class Panel(_TkTaban):
             "dosya": f"{i:02d}_distorch.png",
             "theta": None if th is None else {k: round(th[k], 6)
                                               for k in ("k1", "k2", "cx", "cy")},
-            "tespit": [{k: (round(v, 4) if isinstance(v, float) else v)
-                        for k, v in x.items()
-                        if k in ("name", "conf", "en_boy", "uzun_mm", "kisa_mm")}
-                       for x in det]})
+            "tespit": [det_json(x) for x in det]})
         o["sayac"] = i
         self.status.set(f"{i}/{o['n']} kare -> {o['dir'].name}")
         self._adim_yaz()
