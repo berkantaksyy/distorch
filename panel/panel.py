@@ -74,7 +74,7 @@ ANCHORS = (0.30, 0.60)
 # "OLCUM AYARLARINI KUR" bunu yukluyor.
 # Yuzdeler DUZELTILMIS kareye gore; duzeltme kadraji degistirdigi icin ham
 # karedeki ayni bolge farkli yuzdelere denk geliyor. 28/16/10/5 fazla kesiyordu.
-KESME_KAYITLI = {"ust": 17.0, "alt": 13.0, "sol": 0.0, "sag": 0.0}
+KESME_KAYITLI = {"ust": 17.0, "alt": 16.0, "sol": 0.0, "sag": 0.0}
 
 
 # --------------------------------------------------------------- geometri
