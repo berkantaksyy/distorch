@@ -5,22 +5,66 @@ Tkinter penceresi. Linux/V4L2. macOS'a ozgu hicbir sey yok.
 Kendi kendine yeter: distorch paketini IMPORT ETMEZ, hicbir dosyani degistirmez.
 Matematik (Brown k1,k2 + capa donusumu) burada kopya olarak duruyor.
 
+    ./run.sh                   kur (gerekiyorsa) ve ac
     python3 panel.py
-    python3 panel.py --device 2 --out ./cikti
+    python3 panel.py --device /dev/video2 --out ./cikti
+    python3 panel.py --check   pencere acmadan ortami sina (setup.sh bunu cagirir)
 """
 import argparse
 import glob
+import importlib
 import json
 import os
+import platform
+import sys
 import threading
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
+BURASI = Path(__file__).resolve().parent
+
+# ultralytics calisma aninda eksik paket gorurse kendi kendine pip install
+# dener: agsiz makinede dakikalarca takilir, sonunda yine hata verir.
+# Kurulum setup.sh'in isi, calisma aninin degil.
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+os.environ.setdefault("YOLO_VERBOSE", "false")
+
+
+def _zorunlu(ad, paket):
+    """Zorunlu bir paket yoksa 30 satirlik traceback yerine tek satir sonuc."""
+    sys.stderr.write(
+        f"\nHATA: '{ad}' bulunamadi (paket: {paket}).\n\n"
+        f"  Kurulum tek komut:\n"
+        f"      cd {BURASI}\n"
+        f"      ./setup.sh\n\n"
+        f"  Sonra:  ./run.sh\n\n")
+    raise SystemExit(2)
+
+
+try:
+    import numpy as np
+except ImportError:
+    _zorunlu("numpy", "numpy")
+try:
+    import cv2
+except ImportError:
+    _zorunlu("cv2", "opencv-python-headless")
+try:
+    from PIL import Image, ImageTk
+except ImportError:
+    _zorunlu("PIL", "pillow")
+
+# tkinter stdlib ama Debian/Ubuntu ayri paket olarak veriyor (python3-tk).
+# Yoksa programi burada oldurmuyoruz, isaretliyoruz: --check yine calissin diye.
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+    TK_HATA = ""
+    _TkTaban = tk.Tk
+except Exception as _e:                      # ImportError veya TclError
+    TK_HATA = f"{type(_e).__name__}: {_e}"
+    tk = ttk = filedialog = messagebox = None
+    _TkTaban = object                        # sinif tanimlanabilsin; GUI acilmaz
 
 CANON_F = 1920.0
 ANCHORS = (0.30, 0.60)
@@ -127,8 +171,12 @@ class DistortNet:
     STD = np.array([0.229, 0.224, 0.225], np.float32)
 
     def __init__(self, weights, meta=None, bias=None):
-        import torch, torchvision
-        import torch.nn as nn
+        try:
+            import torch, torchvision
+            import torch.nn as nn
+        except ImportError as e:
+            raise RuntimeError(
+                f"torch/torchvision yok ({e}). Kurmak icin: ./setup.sh") from e
         self.torch = torch
         wp = Path(weights)
         mp = Path(meta) if meta else Path(str(wp).replace(".pt", "_meta.json"))
@@ -218,6 +266,15 @@ def list_devices():
     return out or ["/dev/video0"]
 
 
+def fourcc_code(s):
+    """VideoWriter_fourcc OpenCV 4.10'da kullanimdan kalkti, yenisi VideoWriter.fourcc.
+    Ikisinden hangisi varsa onu kullan; surum yuzunden panel acilmasin diye."""
+    fn = getattr(cv2, "VideoWriter_fourcc", None)
+    if fn is None:
+        fn = cv2.VideoWriter.fourcc
+    return int(fn(*s))
+
+
 class Camera:
     """V4L2, YUY2, sabit cozunurluk. Arka planda okur, son kareyi tutar."""
 
@@ -230,24 +287,38 @@ class Camera:
         self.err = ""
         self.real = (0, 0)
         self.measured_fps = 0.0
+        self.thread = None
 
     def open(self):
         idx = self.device
-        if isinstance(idx, str) and idx.startswith("/dev/video"):
-            idx = int("".join(c for c in idx if c.isdigit()))
-        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
-        if not cap.isOpened():
-            self.err = f"acilamadi: {self.device} (v4l2)"
+        if isinstance(idx, str):
+            # "/dev/video2" de olur, duz "2" de: ikisi de 2 numarali aygit
+            if idx.startswith("/dev/video") or idx.strip().isdigit():
+                idx = int("".join(c for c in idx if c.isdigit()) or 0)
+        try:
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+        except Exception as e:
+            self.err = f"acilamadi: {self.device} ({type(e).__name__}: {e})"
             return False
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.fourcc))
+        if not cap.isOpened():
+            self.err = (f"acilamadi: {self.device} (v4l2)\n\n"
+                        f"- aygit takili mi:  ls -l /dev/video*\n"
+                        f"- izin var mi:      sudo usermod -aG video $USER  (sonra oturumu kapat/ac)\n"
+                        f"- baska bir program kullaniyor olabilir")
+            return False
+        try:
+            cap.set(cv2.CAP_PROP_FOURCC, fourcc_code(self.fourcc))
+        except Exception:
+            pass                                  # format tutmazsa surucu kendi secer
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.size[0])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.size[1])
         cap.set(cv2.CAP_PROP_FPS, self.fps)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         ok, f = cap.read()
-        if not ok:
+        if not ok or f is None:
             cap.release()
-            self.err = "kare okunamadi - format/cozunurluk desteklenmiyor olabilir"
+            self.err = ("kare okunamadi - format/cozunurluk desteklenmiyor olabilir\n\n"
+                        f"destekledigi formatlar:  v4l2-ctl -d {self.device} --list-formats-ext")
             return False
         self.real = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                      int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -255,14 +326,18 @@ class Camera:
         self.frame = f
         self.run = True
         self.err = ""
-        threading.Thread(target=self._loop, daemon=True).start()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
         return True
 
     def _loop(self):
         t0, n = time.time(), 0
         while self.run:
-            ok, f = self.cap.read()
-            if not ok:
+            try:
+                ok, f = self.cap.read()
+            except Exception:
+                break
+            if not ok or f is None:
                 time.sleep(0.01)
                 continue
             with self.lock:
@@ -277,8 +352,15 @@ class Camera:
             return None if self.frame is None else self.frame.copy()
 
     def close(self):
+        """Okuma is parcacigi bitmeden release ETME.
+
+        read() YUYV 1080p'de 200 ms bloklayabiliyor; sabit bir sleep yetmiyor,
+        release okuma sirasinda calisirsa V4L2 kilitleniyor ya da cokuyor.
+        """
         self.run = False
-        time.sleep(0.08)
+        if self.thread is not None:
+            self.thread.join(timeout=3.0)
+            self.thread = None
         if self.cap:
             self.cap.release()
         self.cap = None
@@ -288,7 +370,10 @@ class Camera:
 
 class Yolo:
     def __init__(self, weights):
-        from ultralytics import YOLO as _Y
+        try:
+            from ultralytics import YOLO as _Y
+        except ImportError as e:
+            raise RuntimeError(f"ultralytics yok ({e}). Kurmak icin: ./setup.sh") from e
         self.m = _Y(str(weights))
         self.name = Path(weights).name
         self.task = getattr(self.m, "task", "?")
@@ -322,8 +407,15 @@ class Yolo:
 
 # --------------------------------------------------------------- panel
 
-class Panel(tk.Tk):
-    PREVIEW_W = 1040
+def _sayi(var, yedek, tur=int):
+    """Tk kutusuna sacma bir sey yazilmissa TclError firlatma, yedege don."""
+    try:
+        return tur(var.get())
+    except Exception:
+        return yedek
+
+
+class Panel(_TkTaban):
 
     def __init__(self, args):
         super().__init__()
@@ -336,8 +428,11 @@ class Panel(tk.Tk):
         self.maps = None
         self.maps_key = None
         self.shot = 0
-        self.out = Path(args.out)
-        self.out.mkdir(parents=True, exist_ok=True)
+        self.out = self._out_hazirla(Path(args.out))
+
+        # 1366x768 panel PC'de sag sutun ekran disina tasmasin
+        self.preview_w = max(480, min(1040, self.winfo_screenwidth() - 420))
+        self.preview_h = max(320, min(640, self.winfo_screenheight() - 260))
 
         self.v_dev = tk.StringVar(value=args.device or list_devices()[0])
         self.v_w = tk.IntVar(value=args.width)
@@ -365,6 +460,9 @@ class Panel(tk.Tk):
         self.v_tag = tk.StringVar(value="test")
         self.v_saveraw = tk.BooleanVar(value=True)
 
+        self._det = []              # onizlemede yeniden kullanilan son tespit
+        self._det_next = 0.0        # bir sonraki YOLO kosusunun en erken zamani
+
         self.status = tk.StringVar(value="hazir")
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._quit)
@@ -382,7 +480,8 @@ class Panel(tk.Tk):
 
         self.canvas = tk.Label(left, background="#111")
         self.canvas.pack(fill="both", expand=True)
-        ttk.Label(left, textvariable=self.status).pack(anchor="w", pady=(6, 0))
+        ttk.Label(left, textvariable=self.status, wraplength=self.preview_w).pack(
+            anchor="w", pady=(6, 0))
 
         def box(t):
             f = ttk.LabelFrame(right, text=t, padding=6)
@@ -437,11 +536,12 @@ class Panel(tk.Tk):
         for k in ("ust", "alt", "sol", "sag"):
             r = ttk.Frame(c); r.pack(fill="x")
             ttk.Label(r, text=k, width=5).pack(side="left")
-            ttk.Scale(r, from_=0, to=40, variable=self.v_cut[k],
-                      orient="horizontal").pack(side="left", fill="x", expand=True)
-            ttk.Label(r, textvariable=self.v_cut[k], width=5).pack(side="left")
-        ttk.Button(c, text="sifirla",
-                   command=lambda: [v.set(0.0) for v in self.v_cut.values()]).pack(anchor="e")
+            lab = ttk.Label(r, text="0", width=4, anchor="e")
+            ttk.Scale(r, from_=0, to=40, variable=self.v_cut[k], orient="horizontal",
+                      command=lambda v, l=lab: l.configure(text=f"{float(v):.0f}")
+                      ).pack(side="left", fill="x", expand=True)
+            lab.pack(side="left")
+        ttk.Button(c, text="sifirla", command=self._cut_reset).pack(anchor="e")
 
         # yolo
         c = box("2) NESNE TESPITI   (YOLO agirligi - ayri model)")
@@ -453,9 +553,11 @@ class Panel(tk.Tk):
                                               reset_yolo=True, want="yolo")).pack(side="left")
         r = ttk.Frame(c); r.pack(fill="x")
         ttk.Label(r, text="conf").pack(side="left")
-        ttk.Scale(r, from_=0.01, to=0.9, variable=self.v_conf,
-                  orient="horizontal").pack(side="left", fill="x", expand=True)
-        ttk.Label(r, textvariable=self.v_conf, width=5).pack(side="left")
+        lab = ttk.Label(r, text="0.25", width=5, anchor="e")
+        ttk.Scale(r, from_=0.01, to=0.9, variable=self.v_conf, orient="horizontal",
+                  command=lambda v, l=lab: l.configure(text=f"{float(v):.2f}")
+                  ).pack(side="left", fill="x", expand=True)
+        lab.pack(side="left")
         ttk.Checkbutton(c, text="retina_masks (tam cozunurluk maske)",
                         variable=self.v_retina).pack(anchor="w")
         r = ttk.Frame(c); r.pack(fill="x")
@@ -478,8 +580,29 @@ class Panel(tk.Tk):
         self.lbl_out = ttk.Label(c, text=str(self.out), wraplength=310, foreground="#555")
         self.lbl_out.pack(anchor="w")
 
+    def _out_hazirla(self, p):
+        """Cikti klasoru yazilamiyorsa panel acilmadan cokmesin, /tmp'ye dus."""
+        for aday in (p, Path("/tmp") / "panel_cikti"):
+            try:
+                aday.mkdir(parents=True, exist_ok=True)
+                t = aday / ".yazma_denemesi"
+                t.write_text("x"); t.unlink()
+                if aday != p:
+                    sys.stderr.write(f"UYARI: {p} yazilamadi, cikti -> {aday}\n")
+                return aday
+            except Exception:
+                continue
+        return p
+
+    def _cut_reset(self):
+        for v in self.v_cut.values():
+            v.set(0.0)
+
     def _pick(self, var, types, reset_yolo=False, want=None):
-        p = filedialog.askopenfilename(filetypes=types + [("hepsi", "*.*")])
+        agirlik = BURASI.parent / "weights"
+        p = filedialog.askopenfilename(
+            filetypes=types + [("hepsi", "*.*")],
+            initialdir=str(agirlik if agirlik.is_dir() else BURASI))
         if not p:
             return
         if want:
@@ -497,9 +620,10 @@ class Panel(tk.Tk):
         self._reset_theta()
         if reset_yolo:
             self.yolo = None
+            self._det = []
 
     def _pick_out(self):
-        p = filedialog.askdirectory()
+        p = filedialog.askdirectory(initialdir=str(self.out.parent))
         if p:
             self.out = Path(p)
             self.out.mkdir(parents=True, exist_ok=True)
@@ -522,16 +646,18 @@ class Panel(tk.Tk):
             self.btn_cam.configure(text="KAMERAYI AC")
             self.status.set("kamera kapali")
             return
-        c = Camera(self.v_dev.get(), self.v_w.get(), self.v_h.get(),
-                   self.v_fps.get(), self.v_fourcc.get())
+        w = _sayi(self.v_w, 1920); h = _sayi(self.v_h, 1080)
+        c = Camera(self.v_dev.get(), w, h, _sayi(self.v_fps, 30), self.v_fourcc.get())
+        self.status.set(f"kamera aciliyor: {self.v_dev.get()} ...")
+        self.update_idletasks()
         if not c.open():
+            self.status.set("kamera acilamadi")
             messagebox.showerror("kamera", c.err)
             return
         self.cam = c
         self.btn_cam.configure(text="KAMERAYI KAPAT")
-        if c.real != (self.v_w.get(), self.v_h.get()):
-            self.status.set(f"DIKKAT: istenen {self.v_w.get()}x{self.v_h.get()}, "
-                            f"alinan {c.real[0]}x{c.real[1]}")
+        if c.real != (w, h):
+            self.status.set(f"DIKKAT: istenen {w}x{h}, alinan {c.real[0]}x{c.real[1]}")
 
     # ---------------------------------------------------------- isleme
     def _get_theta(self, frame):
@@ -549,6 +675,8 @@ class Panel(tk.Tk):
             return self.theta
         if self.net is None and self.v_wts.get():
             try:
+                self.status.set("model yukleniyor...")
+                self.update_idletasks()
                 self.net = DistortNet(self.v_wts.get())
                 self.status.set(f"model: {self.net.name}")
             except Exception as e:
@@ -567,13 +695,13 @@ class Panel(tk.Tk):
             return frame, None
         h, w = frame.shape[:2]
         t = th if (w, h) == (1920, 1080) else scale_theta(th, w / 1920.0)
-        try:
-            roll = float(self.v_rolltxt.get()) if self.v_level.get() else 0.0
-        except ValueError:
-            roll = 0.0
+        roll = _sayi(self.v_rolltxt, 0.0, float) if self.v_level.get() else 0.0
         key = (round(t["k1"], 6), round(t["k2"], 6), round(t["cx"], 2),
                round(t["cy"], 2), w, h, round(roll, 4))
         if self.maps is None or self.maps_key != key:
+            # 1920x1080'de 1-2 sn suruyor; donma sanilmasin diye haber ver
+            self.status.set("haritalar hazirlaniyor...")
+            self.update_idletasks()
             self.maps = build_maps(t, (w, h), roll)
             self.maps_key = key
         return cv2.remap(frame, self.maps[0], self.maps[1], cv2.INTER_LINEAR), th
@@ -588,26 +716,45 @@ class Panel(tk.Tk):
             return img
         return img[y0:y1, x0:x1]
 
-    def detect(self, img):
+    def _yolo_hazir(self):
         if not self.v_yolo_on.get() or not self.v_yolo_w.get():
-            return img, []
+            return False
         if self.yolo is None:
             try:
+                self.status.set("yolo yukleniyor...")
+                self.update_idletasks()
                 self.yolo = Yolo(self.v_yolo_w.get())
                 self.status.set(f"yolo: {self.yolo.name} ({self.yolo.task})")
             except Exception as e:
                 self.status.set(f"yolo yuklenemedi: {e}")
                 self.v_yolo_on.set(False)
-                return img, []
+                return False
+        return True
+
+    def detect(self, img, throttle=False):
+        """throttle=True: onizleme. CPU'da bir kosu 1-2 sn; her karede calistirirsak
+        arayuz hic nefes alamiyor. Kosu suresi kadar bekleyip son tespiti yeniden
+        cizeriz. KARE AL'da throttle yok, olcum karesi kendi tespitiyle kaydedilir."""
+        if not self._yolo_hazir():
+            self._det = []
+            return img, []
+        if throttle and time.time() < self._det_next:
+            return self._draw(img, self._det), self._det
         try:
+            t0 = time.time()
             det = self.yolo.run(img, self.v_conf.get(), self.v_retina.get())
+            self._det_next = time.time() + max(0.25, time.time() - t0)
         except Exception as e:
             self.status.set(f"yolo hatasi: {e}")
+            self._det_next = time.time() + 1.0
             return img, []
-        try:
-            mm = float(self.v_mmpx.get()) if self.v_mmpx.get().strip() else None
-        except ValueError:
-            mm = None
+        self._det = det
+        return self._draw(img, det), det
+
+    def _draw(self, img, det):
+        if not det:
+            return img
+        mm = _sayi(self.v_mmpx, None, float) if self.v_mmpx.get().strip() else None
         vis = img.copy()
         F = cv2.FONT_HERSHEY_SIMPLEX
         for d in det:
@@ -627,7 +774,7 @@ class Panel(tk.Tk):
                     d["kisa_mm"] = rt["kisa"] * mm
                     txt += f'  {rt["uzun"]*mm:.0f}x{rt["kisa"]*mm:.0f} mm'
             cv2.putText(vis, txt, (x1, max(16, y1 - 6)), F, 0.55, (80, 230, 80), 2)
-        return vis, det
+        return vis
 
     # ---------------------------------------------------------- dongu
     def _tick(self):
@@ -637,7 +784,7 @@ class Panel(tk.Tk):
                 try:
                     cor, th = self.correct(f)
                     img = self.cut(cor)
-                    img, det = self.detect(img)
+                    img, det = self.detect(img, throttle=True)
                     self._show(img)
                     s = (f"{self.cam.real[0]}x{self.cam.real[1]} @ "
                          f"{self.cam.measured_fps:.1f} fps   kesim sonrasi "
@@ -653,8 +800,11 @@ class Panel(tk.Tk):
 
     def _show(self, img):
         h, w = img.shape[:2]
-        s = min(self.PREVIEW_W / w, 640.0 / h, 1.0)
-        v = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+        if h < 1 or w < 1:
+            return
+        s = min(self.preview_w / w, self.preview_h / h, 1.0)
+        v = cv2.resize(img, (max(1, int(w * s)), max(1, int(h * s))),
+                       interpolation=cv2.INTER_AREA)
         im = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(v, cv2.COLOR_BGR2RGB)))
         self.canvas.configure(image=im)
         self.canvas.image = im
@@ -664,17 +814,25 @@ class Panel(tk.Tk):
         if not self.cam:
             messagebox.showwarning("kamera", "once kamerayi ac")
             return
+        try:
+            self._shoot_gercek()
+        except Exception as e:                # disk dolu, izin yok, model patladi
+            self.status.set(f"kayit basarisiz: {type(e).__name__}: {e}")
+            messagebox.showerror("kayit", f"{type(e).__name__}: {e}\n\nklasor: {self.out}")
+
+    def _shoot_gercek(self):
         self.shot += 1
         tag = self.v_tag.get().strip() or "test"
         stamp = time.strftime("%Y%m%d_%H%M%S")
         d = self.out / f"{tag}_{stamp}"
         d.mkdir(parents=True, exist_ok=True)
         meta = {"etiket": tag, "zaman": stamp, "mod": self.v_mode.get(),
-                "kesme": {k: v.get() for k, v in self.v_cut.items()},
+                "kesme": {k: round(v.get(), 2) for k, v in self.v_cut.items()},
                 "kamera": {"aygit": self.v_dev.get(), "format": self.v_fourcc.get(),
                            "cozunurluk": list(self.cam.real)},
                 "kareler": []}
-        for i in range(self.v_n.get()):
+        gap = _sayi(self.v_gap, 150)
+        for i in range(_sayi(self.v_n, 3)):
             f = self.cam.grab()
             if f is None:
                 continue
@@ -695,9 +853,9 @@ class Panel(tk.Tk):
                             for k, v in x.items()
                             if k in ("name", "conf", "en_boy", "uzun_mm", "kisa_mm")}
                            for x in det]})
-            if self.v_gap.get():
+            if gap:
                 self.update()
-                time.sleep(self.v_gap.get() / 1000.0)
+                time.sleep(gap / 1000.0)
         (d / "kayit.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
         self.status.set(f"{len(meta['kareler'])} kare -> {d}")
 
@@ -707,8 +865,91 @@ class Panel(tk.Tk):
         self.destroy()
 
 
+# --------------------------------------------------------------- kontrol
+
+def _geometri_sinavi():
+    """Matematik dogru mu: distort -> undistort geri doniyor mu, harita cikiyor mu."""
+    th = {"k1": -0.35, "k2": 0.12, "cx": 962.0, "cy": 541.0, "f": CANON_F}
+    rng = np.random.default_rng(0)
+    p = np.column_stack([rng.uniform(0, 1920, 500), rng.uniform(0, 1080, 500)])
+    hata = float(np.abs(undistort_points(distort_points(p, th), th) - p).max())
+    k1, k2 = kk_from_mags(1.04, 1.11)
+    mx, my = build_maps(dict(th, k1=k1, k2=k2), (64, 48), roll_deg=3.0)
+    harita = (mx.shape == (48, 64) and bool(np.isfinite(mx).all())
+              and bool(np.isfinite(my).all()))
+    return hata, harita
+
+
+def kontrol():
+    """Pencere acmadan ortami sinar. setup.sh bunu son adim olarak cagiriyor.
+    Cikis kodu 0 -> panel acilir. 1 -> acilmaz, sebebi yukarida yazar."""
+    G, R, Y, N = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
+    if not sys.stdout.isatty():
+        G = R = Y = N = ""
+    kotu = []
+
+    print("== ortam")
+    print(f"  python      {sys.version.split()[0]}   {sys.executable}")
+    print(f"  sistem      {platform.system()} {platform.release()}  {platform.machine()}")
+    print(f"  numpy       {np.__version__}")
+    print(f"  opencv      {cv2.__version__}")
+    if TK_HATA:
+        print(f"  {R}tkinter     YOK -> {TK_HATA}{N}")
+        kotu.append("tkinter (Debian/Ubuntu: sudo apt install -y python3-tk)")
+    else:
+        print(f"  tkinter     {tk.TkVersion}")
+
+    print("\n== istege bagli paketler  (yoksa panel yine acilir)")
+    for mod, ne in (("torch", "distorch .pt modeli"), ("torchvision", "distorch .pt modeli"),
+                    ("ultralytics", "YOLO tespiti"), ("scipy", "distorch cozucusu")):
+        try:
+            m = importlib.import_module(mod)
+            print(f"  {G}var{N}  {mod:14s} {getattr(m, '__version__', '')}  ({ne})")
+        except Exception as e:
+            print(f"  {Y}yok{N}  {mod:14s} {type(e).__name__}  -> {ne} calismaz")
+
+    print("\n== matematik")
+    try:
+        hata, harita = _geometri_sinavi()
+        iyi = hata < 1e-3 and harita
+        print(f"  {(G+'OK'+N) if iyi else (R+'HATA'+N)}  distort/undistort geri donus "
+              f"{hata:.2e} px, harita {'cikti' if harita else 'CIKMADI'}")
+        if not iyi:
+            kotu.append("geometri sinavi")
+    except Exception as e:
+        print(f"  {R}HATA{N}  {type(e).__name__}: {e}")
+        kotu.append("geometri sinavi")
+
+    print("\n== kamera")
+    v4l2 = hasattr(cv2, "CAP_V4L2")
+    print(f"  v4l2 backend  {'var' if v4l2 else 'YOK'}")
+    ayg = sorted(glob.glob("/dev/video*"))
+    if ayg:
+        for d in ayg:
+            print(f"  {d}")
+    else:
+        print(f"  {Y}/dev/video* yok{N} - kamera takili degil (panel yine acilir)")
+
+    print("\n== ekran")
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        print(f"  DISPLAY={os.environ.get('DISPLAY', '')} "
+              f"WAYLAND_DISPLAY={os.environ.get('WAYLAND_DISPLAY', '')}")
+    elif platform.system() == "Linux":
+        print(f"  {Y}DISPLAY yok{N} - SSH ile baglandiysan 'ssh -X' gerekir, "
+              f"panel masaustunde acilmali")
+
+    print()
+    if kotu:
+        print(f"{R}panel ACILMAZ:{N}")
+        for k in kotu:
+            print(f"  - {k}")
+        return 1
+    print(f"{G}panel acilabilir.{N}")
+    return 0
+
+
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="distorsiyon/YOLO test paneli")
     ap.add_argument("--device", default=None)
     ap.add_argument("--width", type=int, default=1920)
     ap.add_argument("--height", type=int, default=1080)
@@ -716,8 +957,37 @@ def main():
     ap.add_argument("--fourcc", default="YUYV")
     ap.add_argument("--shots", type=int, default=3)
     ap.add_argument("--gap-ms", type=int, default=150)
-    ap.add_argument("--out", default="./cikti")
-    Panel(ap.parse_args()).mainloop()
+    ap.add_argument("--out", default=None,
+                    help="cikti klasoru (varsayilan: panel.py'nin yanindaki cikti/)")
+    ap.add_argument("--check", action="store_true",
+                    help="pencere acmadan ortami sina, cikis kodu dondur")
+    args = ap.parse_args()
+
+    if args.check:
+        raise SystemExit(kontrol())
+
+    if args.out is None:
+        args.out = str(BURASI / "cikti")
+
+    if TK_HATA:
+        sys.stderr.write(
+            f"\nHATA: tkinter yuklenemedi -> {TK_HATA}\n\n"
+            f"  Debian/Ubuntu : sudo apt install -y python3-tk\n"
+            f"  Fedora/RHEL   : sudo dnf install -y python3-tkinter\n"
+            f"  Arch          : sudo pacman -S tk\n\n"
+            f"  Sonra:  ./setup.sh --force\n\n")
+        raise SystemExit(2)
+
+    try:
+        p = Panel(args)
+    except tk.TclError as e:
+        sys.stderr.write(
+            f"\nHATA: pencere acilamadi -> {e}\n\n"
+            f"  Panelin bir masaustu oturumuna ihtiyaci var.\n"
+            f"  SSH ile baglandiysan:   ssh -X kullanici@makine\n"
+            f"  Ortami gormek icin:     python3 panel.py --check\n\n")
+        raise SystemExit(2)
+    p.mainloop()
 
 
 if __name__ == "__main__":

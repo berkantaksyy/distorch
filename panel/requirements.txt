@@ -1,12 +1,13 @@
-# Panel Tkinter ile ciziliyor, opencv'nin GUI'sine ihtiyac yok ->
-# headless surum: Qt/GTK bagimliligi gelmiyor, kurulum hafif.
-opencv-python-headless>=4.8
-numpy>=1.24
+# CEKIRDEK KATMAN - panelin acilmasi icin gereken her sey, baska hicbir sey.
+# Bu dosya tek basina kurulursa panel acilir: kamera + profil JSON ile
+# distorsiyon duzeltme + kesme + kare kaydi calisir.
+# Agir olanlar (torch, ultralytics) requirements-extra.txt'te; setup.sh once
+# burayi kurar, sonra oraya gecer. Agir katman patlarsa panel yine acilir.
+
+numpy>=1.24,<3
+
+# panel Tkinter ile ciziliyor -> opencv'nin GUI'sine gerek yok, headless yeterli
+# (<5: opencv 5.x yeni, torch/ultralytics ile birlikte denenmedi)
+opencv-python-headless>=4.8,<5
+
 pillow>=10.0
-
-# distort_v2 / v3 gibi kalibrasyon aglari icin (CPU yeterli)
-torch>=2.0
-torchvision>=0.15
-
-# YOLO (Plastic.pt vb.) icin
-ultralytics>=8.0

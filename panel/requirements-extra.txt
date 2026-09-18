@@ -1,0 +1,15 @@
+# AGIR KATMAN - panelin acilmasi icin SART DEGIL.
+# Yoksa panel yine acilir, sadece ilgili bolum calismaz:
+#   torch/torchvision yok -> "distorch modeli (.pt)" secenegi calismaz
+#   ultralytics yok       -> "2) NESNE TESPITI (YOLO)" calismaz
+#   scipy yok             -> distorch'un cozucusu bu ortamdan calismaz
+#
+# torch/torchvision BURADA YOK: setup.sh onlari mimariye gore seciyor
+# (x86_64 -> resmi CPU deposu; PyPI tekerlegi CUDA tasiyor, ~2.5 GB ve
+#  bu makinede hicbir ise yaramiyor. aarch64 -> PyPI, CPU deposunda yok.)
+
+scipy>=1.10
+
+# YOLO (Plastic.pt, Glass.pt, Metal_All.pt)
+# >=8.3: torch 2.6'nin weights_only varsayilani ile uyumlu ilk seri
+ultralytics>=8.3
